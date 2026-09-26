@@ -432,3 +432,70 @@ test("a receiver-attached mouse keeps using short reports", async () => {
     "the 0xFF00 short path is unchanged for receivers",
   );
 });
+
+/**
+ * A mouse whose HITS feature (0x1B0C) holds one [actuation, rapid trigger,
+ * haptics] wire triple per button. The byte values are the ones captured from
+ * a PRO X 3 Superstrike: 0x14 / 0x08 / 0x0c, i.e. actuation 5, rapid trigger 2
+ * (off) and haptics 3, with the rapid-trigger on/off switch in bit 0.
+ */
+function analogButtonsMouse(): { client: LogitechHidppClient; wire: number[][] } {
+  const FEATURE_INDEX = 0x16;
+  const wire = [[0x14, 0x08, 0x0c], [0x14, 0x08, 0x0c]];
+  const { client, device } = harness(0xc54d, { 1: "mouse" });
+  const base = hidppResponder({ 1: "mouse" });
+  device.onRequest = (request) => {
+    const deviceIndex = request[0];
+    const featureId = (request[3] << 8) | request[4];
+    if (request[1] === 0x00 && featureId === 0x1b0c) return successReply(deviceIndex, 0x00, 0x00, [FEATURE_INDEX, 0x00, 0x00]);
+    if (request[1] !== FEATURE_INDEX) return base(request);
+    const fn = request[2] >> 4;
+    const button = request[3];
+    if (fn === 0) return successReply(deviceIndex, FEATURE_INDEX, 0x00, [0x00, 0x03, 0x28, 0x14, 0x14, 0x01]);
+    if (fn === 2) return successReply(deviceIndex, FEATURE_INDEX, 0x20, [button, ...wire[button], 0x00]);
+    if (fn === 1) {
+      wire[button] = [request[4], request[5], request[6]];
+      return successReply(deviceIndex, FEATURE_INDEX, 0x10, [button, request[4], request[5], request[6], 0x00]);
+    }
+    return null;
+  };
+  return { client, wire };
+}
+
+test("HITS tuning reads rapid trigger's on/off state from bit 0, apart from its sensitivity", async () => {
+  const { client, wire } = analogButtonsMouse();
+  await resolveIndex(client);
+  const read = () => (client as unknown as {
+    readAnalogButtonTuning(index: number): Promise<{ buttons: Array<Record<string, unknown>> }>;
+  }).readAnalogButtonTuning(0x16);
+
+  assert.deepEqual((await read()).buttons[0], { actuation: 5, rapidTrigger: 2, haptics: 3, rapidTriggerEnabled: false });
+  wire[0][1] = 0x09; // the same sensitivity with the switch on, as captured
+  assert.deepEqual((await read()).buttons[0], { actuation: 5, rapidTrigger: 2, haptics: 3, rapidTriggerEnabled: true });
+  wire[0][1] = 0x0d; // sensitivity 3, switch on
+  assert.deepEqual((await read()).buttons[0], { actuation: 5, rapidTrigger: 3, haptics: 3, rapidTriggerEnabled: true });
+});
+
+test("HITS tuning turns rapid trigger on and off without touching sensitivity or the other button", async () => {
+  const { client, wire } = analogButtonsMouse();
+  await resolveIndex(client);
+
+  await client.setAnalogButtonTuning(0, { actuation: 5, rapidTrigger: 2, haptics: 3, rapidTriggerEnabled: true });
+  assert.equal(wire[0][1], 0x09);
+  assert.equal(wire[1][1], 0x08, "the other button is untouched");
+
+  await client.setAnalogButtonTuning(0, { actuation: 5, rapidTrigger: 2, haptics: 3, rapidTriggerEnabled: false });
+  assert.equal(wire[0][1], 0x08);
+});
+
+test("a HITS write that does not name the rapid trigger state keeps the current one", async () => {
+  const { client, wire } = analogButtonsMouse();
+  await resolveIndex(client);
+  wire[0][1] = 0x09; // on
+
+  await client.setAnalogButtonTuning(0, { actuation: 5, rapidTrigger: 3, haptics: 3 });
+  assert.equal(wire[0][1], 0x0d, "sensitivity changed, switch still on");
+  wire[0][1] = 0x0c; // off, sensitivity 3
+  await client.setAnalogButtonTuning(0, { actuation: 5, rapidTrigger: 4, haptics: 3 });
+  assert.equal(wire[0][1], 0x10, "sensitivity changed, switch still off");
+});

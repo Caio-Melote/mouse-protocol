@@ -393,7 +393,7 @@ interface AnalogButtonTuning {
   maxActuation: number;
   maxRapidTrigger: number;
   maxHaptics: number;
-  buttons: Array<{ actuation: number; rapidTrigger: number; haptics: number }>;
+  buttons: Array<{ actuation: number; rapidTrigger: number; haptics: number; rapidTriggerEnabled: boolean }>;
 }
 
 interface DeviceIdentity {
@@ -1194,7 +1194,15 @@ export class LogitechHidppClient {
     return result;
   }
 
-  async setAnalogButtonTuning(button: 0 | 1, tuning: { actuation: number; rapidTrigger: number; haptics: number }): Promise<void> {
+  /**
+   * `rapidTriggerEnabled` switches rapid trigger on or off (the toggle G HUB
+   * labels "Schnellauslöser aktivieren"); left out, the button's current state
+   * is kept.
+   */
+  async setAnalogButtonTuning(
+    button: 0 | 1,
+    tuning: { actuation: number; rapidTrigger: number; haptics: number; rapidTriggerEnabled?: boolean },
+  ): Promise<void> {
     const feature = await this.getFeature(FEATURE.analogButtons);
     if (!feature.index) {
       throw new Error("This Logitech mouse does not expose hall-effect button tuning.");
@@ -1209,18 +1217,24 @@ export class LogitechHidppClient {
       || !Number.isInteger(tuning.haptics) || tuning.haptics < 0 || tuning.haptics > current.maxHaptics) {
       throw new Error("One or more hall-effect button values are outside the mouse's supported range.");
     }
-    // HID++ 0x1B0C stores logical values in bits 7..2. Bit 0 of rapid trigger
-    // is a firmware-managed sensitivity flag, so it must survive the write.
+    // HID++ 0x1B0C stores logical values in bits 7..2. In the rapid-trigger byte,
+    // bit 0 is the on/off switch: G HUB's toggle flips it (0x08 off, 0x09 on at
+    // sensitivity 2, captured from a PRO X 3 Superstrike). A write that does not
+    // name a state keeps the current one.
     const currentWire = await this.request(feature.index, 0x20, button);
+    const enabledBit = tuning.rapidTriggerEnabled === undefined
+      ? (currentWire[5] ?? 0) & 0x01
+      : tuning.rapidTriggerEnabled ? 1 : 0;
     await this.requestLong(feature.index, 0x10, [
       button,
       tuning.actuation << 2,
-      (tuning.rapidTrigger << 2) | ((currentWire[5] ?? 0) & 0x01),
+      (tuning.rapidTrigger << 2) | enabledBit,
       tuning.haptics << 2,
     ]);
     const confirmed = await this.readAnalogButtonTuning(feature.index);
     const result = confirmed.buttons[button];
-    if (!result || result.actuation !== tuning.actuation || result.rapidTrigger !== tuning.rapidTrigger || result.haptics !== tuning.haptics) {
+    if (!result || result.actuation !== tuning.actuation || result.rapidTrigger !== tuning.rapidTrigger || result.haptics !== tuning.haptics
+      || (tuning.rapidTriggerEnabled !== undefined && result.rapidTriggerEnabled !== tuning.rapidTriggerEnabled)) {
       throw new Error("The mouse did not confirm the hall-effect button settings.");
     }
   }
@@ -3001,6 +3015,7 @@ export class LogitechHidppClient {
         actuation: (reply[4] ?? 0) >> 2,
         rapidTrigger: (reply[5] ?? 0) >> 2,
         haptics: (reply[6] ?? 0) >> 2,
+        rapidTriggerEnabled: ((reply[5] ?? 0) & 0x01) === 1,
       });
     }
     return { maxActuation, maxRapidTrigger, maxHaptics, buttons };
