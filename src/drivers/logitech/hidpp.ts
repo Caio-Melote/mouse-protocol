@@ -115,6 +115,7 @@ import {
   parseDirectory,
   parseProfilesInfo,
   profileCrc,
+  reportRateCapabilitiesFor,
   reportRatesForDevice,
   setDirectoryEnabled,
   storedCrc,
@@ -413,6 +414,8 @@ export class LogitechHidppClient {
   /** Last format read from 0x8100, so a refusal can name it. */
   private profileFormatId: number | null = null;
   private wiredConnection = false;
+  /** The mouse's own reported USB transport id; keys per-product cable limits. */
+  private usbTransportId: string | null = null;
   /** Lift-off levels this device advertised; the single source of truth for both UI and validation. */
   private lodCapabilities: ProfileFormatCapabilities = capabilitiesForFormat(null);
   private supportedLods: Array<NonNullable<LogitechMouseStatus["liftOffDistance"]>> = ["Medium", "High"];
@@ -768,6 +771,11 @@ export class LogitechHidppClient {
     this.supportedLods = [...this.lodCapabilities.supportedLods];
     const wired = isWiredHidppConnection(this.device.productId, identity.transportIds, this.isDirectConnect);
     this.wiredConnection = wired;
+    this.usbTransportId = identity.transportIds.USB ?? null;
+    this.lodCapabilities = {
+      ...this.lodCapabilities,
+      reportRates: reportRateCapabilitiesFor(onboardProfileFormat?.id, this.usbTransportId),
+    };
     // A direct-connect mouse keeps its rate in the onboard profile, so it can
     // only change once that format is verified and actually carries a
     // report-rate field. Anything else stays read-only.
@@ -1512,7 +1520,7 @@ export class LogitechHidppClient {
     if (values.reportRateWirelessHz) {
       const liveRates = await this.getSupportedPollingRateOptions();
       const allowed = reportRatesForDevice(
-        capabilitiesForFormat(formatId).reportRates,
+        reportRateCapabilitiesFor(formatId, this.usbTransportId),
         "wireless",
         liveRates,
         this.wiredConnection ? "wired" : "wireless",
@@ -1521,12 +1529,18 @@ export class LogitechHidppClient {
       if (!allowed.includes(values.reportRateWirelessHz)) {
         throw new Error("The connected mouse did not advertise that profile report rate.");
       }
-      updated = encodeReportRate(updated, formatId, "wireless", values.reportRateWirelessHz);
+      updated = encodeReportRate(
+        updated,
+        formatId,
+        "wireless",
+        values.reportRateWirelessHz,
+        reportRateCapabilitiesFor(formatId, this.usbTransportId),
+      );
     }
     if (values.reportRateWiredHz) {
       const liveRates = await this.getSupportedPollingRateOptions();
       const allowed = reportRatesForDevice(
-        capabilitiesForFormat(formatId).reportRates,
+        reportRateCapabilitiesFor(formatId, this.usbTransportId),
         "wired",
         liveRates,
         this.wiredConnection ? "wired" : "wireless",
@@ -1535,7 +1549,13 @@ export class LogitechHidppClient {
       if (!allowed.includes(values.reportRateWiredHz)) {
         throw new Error("The connected mouse did not advertise that profile report rate.");
       }
-      updated = encodeReportRate(updated, formatId, "wired", values.reportRateWiredHz);
+      updated = encodeReportRate(
+        updated,
+        formatId,
+        "wired",
+        values.reportRateWiredHz,
+        reportRateCapabilitiesFor(formatId, this.usbTransportId),
+      );
     }
 
     if (values.name !== null && values.name !== undefined) {

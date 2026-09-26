@@ -807,6 +807,34 @@ function decodeLegacyReportRate(bytes: Uint8Array, offset: number | null): numbe
   return Number.isInteger(hz) ? hz : null;
 }
 
+/**
+ * USB transport ids (from the mouse's own HID++ identity, so they hold whether
+ * it is on the cable, on its receiver or on Bluetooth) whose cable carries the
+ * full report-rate range instead of the 1 kHz the rest of the format is capped
+ * at. The cap belongs to a product's USB interface, not to its profile format:
+ * the PRO X 2 Superstrike (C0A8) and PRO X 3 Superstrike (C0A9) share format 8,
+ * but a PRO X 3 diagnostic taken on the cable shows its 0x8061 feature
+ * advertising all seven rates through 8000 Hz (mask 0x7f) - the same mask it
+ * reports wirelessly - and G HUB offers 8 kHz on the cable. The PRO X 2's
+ * cable stays at its captured 1 kHz until it shows the same.
+ */
+const FULL_RATE_USB_TRANSPORT_IDS: ReadonlySet<string> = new Set(["C0A9"]);
+
+/**
+ * The report-rate ceilings for a mouse: the format's, with the cable lifted to
+ * the wireless ceiling for a product known to run the full range over USB.
+ */
+export function reportRateCapabilitiesFor(
+  profileFormatId: number | null | undefined,
+  usbTransportId: string | null | undefined,
+): ReportRateCapabilities | null {
+  const capabilities = capabilitiesForFormat(profileFormatId).reportRates;
+  if (!capabilities || !usbTransportId || !FULL_RATE_USB_TRANSPORT_IDS.has(usbTransportId.toUpperCase())) {
+    return capabilities;
+  }
+  return { ...capabilities, wiredMaxHz: capabilities.wirelessMaxHz };
+}
+
 /** Rates the byte can index, filtered to the ceiling for that connection. */
 export function reportRatesFor(
   capabilities: ReportRateCapabilities | null,
