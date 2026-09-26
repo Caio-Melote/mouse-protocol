@@ -366,6 +366,29 @@ export function isWiredHidppConnection(
   return directIndex;
 }
 
+/**
+ * The connection wording the shell shows, or undefined for its default
+ * "2.4 GHz receiver" text.
+ *
+ * Usage page 0xFF43 is Bluetooth's HID++ page, but newer USB mice (the PRO X 3
+ * Superstrike, on its cable and on its Lightspeed receiver) put their USB
+ * interface there too, so the page alone cannot say "Bluetooth". A product id
+ * that is a known receiver or wired mouse is USB whatever page it uses. Only
+ * the label follows this; the transport paths still key off isBluetooth.
+ */
+export function connectionDetailFor(connection: {
+  wired: boolean;
+  directConnect: boolean;
+  bluetoothPage: boolean;
+  knownUsbProduct: boolean;
+  boltReceiver: boolean;
+}): string | undefined {
+  if (connection.wired || connection.directConnect) return "Wired USB";
+  if (connection.bluetoothPage && !connection.knownUsbProduct) return "Bluetooth";
+  if (connection.boltReceiver) return "Logi Bolt";
+  return undefined;
+}
+
 interface BatteryReading {
   percent: number | null;
   state: LogitechMouseStatus["batteryState"];
@@ -866,13 +889,14 @@ export class LogitechHidppClient {
       // Without this the shell falls back to its "2.4 GHz receiver" wording,
       // which is wrong for a mouse plugged straight into USB, and imprecise
       // for Logi Bolt (BLE-based) versus Lightspeed.
-      connectionDetail: this.isDirectConnect
-        ? "Wired USB"
-        : this.isBluetooth
-          ? "Bluetooth"
-          : this.isBoltReceiver
-            ? "Logi Bolt"
-            : undefined,
+      connectionDetail: connectionDetailFor({
+        wired,
+        directConnect: this.isDirectConnect,
+        bluetoothPage: this.isBluetooth,
+        knownUsbProduct: KNOWN_RECEIVER_PRODUCT_IDS.has(this.device.productId)
+          || isDirectConnectProduct(this.device.productId),
+        boltReceiver: this.isBoltReceiver,
+      }),
       activeProfile: profileState.activeProfile,
       deviceMode: profileState.deviceMode,
       unitId: identity.unitId,

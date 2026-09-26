@@ -18,6 +18,7 @@ import {
 } from "@openmouse/protocol/logitech";
 import {
   LogitechHidppClient,
+  connectionDetailFor,
   hasLiftOffControl,
   isPowerOnlyModeStatus,
   isWiredHidppConnection,
@@ -498,4 +499,21 @@ test("a HITS write that does not name the rapid trigger state keeps the current 
   wire[0][1] = 0x0c; // off, sensitivity 3
   await client.setAnalogButtonTuning(0, { actuation: 5, rapidTrigger: 4, haptics: 3 });
   assert.equal(wire[0][1], 0x10, "sensitivity changed, switch still off");
+});
+
+test("connection wording follows the product id, not the 0xFF43 usage page alone", () => {
+  const base = { wired: false, directConnect: false, bluetoothPage: false, knownUsbProduct: false, boltReceiver: false };
+
+  // PRO X 3 Superstrike on its cable (PID 0xC0A9): a USB mouse whose HID++
+  // interface is on the Bluetooth page. It was labelled "Bluetooth".
+  assert.equal(connectionDetailFor({ ...base, wired: true, bluetoothPage: true, knownUsbProduct: true }), "Wired USB");
+  // The same mouse on its Lightspeed receiver (PID 0xC54F), also on 0xFF43: no
+  // special wording, so the shell shows its usual 2.4 GHz text.
+  assert.equal(connectionDetailFor({ ...base, bluetoothPage: true, knownUsbProduct: true }), undefined);
+  // A real Bluetooth mouse: the page and a product id that is not a USB one.
+  assert.equal(connectionDetailFor({ ...base, bluetoothPage: true }), "Bluetooth");
+  // Everything that was already right stays right.
+  assert.equal(connectionDetailFor({ ...base, directConnect: true }), "Wired USB");
+  assert.equal(connectionDetailFor({ ...base, boltReceiver: true }), "Logi Bolt");
+  assert.equal(connectionDetailFor(base), undefined);
 });
