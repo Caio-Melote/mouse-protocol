@@ -88,7 +88,7 @@ test("X11 read-only client reports battery from input reports and refuses writes
 
   const client = new AttackSharkHidClient(composite);
   const before = await client.readStatus();
-  assert.equal(before.name, "Attack Shark X11");
+  assert.equal(before.name, "Attack Shark mouse (2.4 GHz receiver)");
   assert.equal(before.ui?.settingsReady, false);
   assert.equal(before.ui?.forceShowBattery, true);
   assert.match(before.ui?.statusNote ?? "", /needs a native driver/);
@@ -102,7 +102,7 @@ test("X11 read-only client reports battery from input reports and refuses writes
   assert.equal(after.batteryPercent, 80);
   assert.equal(after.batteryState, "Discharging");
 
-  await assert.rejects(() => client.setPollingRate(1000), /native Attack Shark X11 driver/);
+  await assert.rejects(() => client.setPollingRate(1000), /needs the OpenMouse Bridge or the desktop app/);
 });
 
 test("X11 units whose battery report is hidden do not advertise a battery column", async () => {
@@ -150,7 +150,7 @@ test("native X11 adapter writes polling over 0x06 and DPI over 0x04", async () =
   assert.equal(AttackSharkHidClient.isSupported(native), true);
   const client = new AttackSharkHidClient(native, { batteryWaitMs: 0 });
   const status = await client.readStatus();
-  assert.equal(status.name, "Attack Shark X11");
+  assert.equal(status.name, "Attack Shark mouse (2.4 GHz receiver)");
   assert.equal(status.ui?.settingsReady, true);
   assert.equal(status.ui?.statusNote, undefined);
   assert.equal(status.ui?.forceShowBattery, true);
@@ -196,12 +196,12 @@ test("native X11 adapter writes polling over 0x06 and DPI over 0x04", async () =
 
 test("X11-family grants get a native-only explanation, other refusals do not", () => {
   const wireless = attackSharkNativeOnlyMessage([x11Entry(0xfa60, [[0x01, 0x06]])]);
-  assert.match(wireless ?? "", /X11 \(wireless receiver\)/);
+  assert.match(wireless ?? "", /Attack Shark mouse \(2\.4 GHz receiver\)/);
   assert.match(wireless ?? "", /Enable native control/);
   assert.match(wireless ?? "", /OpenMouse Bridge/);
 
   const wired = attackSharkNativeOnlyMessage([x11Entry(0xfa55, [[0x01, 0x02]])]);
-  assert.match(wired ?? "", /X11 \(wired\)/);
+  assert.match(wired ?? "", /Attack Shark mouse \(wired\)/);
 
   // Unknown 0x1d57 PIDs and other vendors keep the generic error.
   assert.equal(attackSharkNativeOnlyMessage([x11Entry(0x1234, [[0x01, 0x02]])]), null);
@@ -215,6 +215,11 @@ test("Attack Shark battery reports validate their signature and percentage", () 
   // Delux M600 Pro on the same 0xfa60 receiver: marker 0x20 (captured at 100 %).
   assert.equal(AttackSharkHidClient.parseBatteryReport(new Uint8Array([0x03, 0x20, 0x40, 0x01, 0x64])), 100);
   assert.equal(AttackSharkHidClient.parseBatteryReport(new Uint8Array([0x03, 0x21, 0x40, 0x01, 0x64])), null);
+  // The R1 (0x10) reports charge on a 1-10 scale.
+  assert.equal(AttackSharkHidClient.parseBatteryReport(new Uint8Array([0x03, 0x10, 0x40, 0x01, 7])), 70);
+  assert.equal(AttackSharkHidClient.parseBatteryReport(new Uint8Array([0x03, 0x10, 0x40, 0x01, 11])), null);
+  // The X3 (0x4d) is named by its id, but its scale is unchecked: no battery.
+  assert.equal(AttackSharkHidClient.parseBatteryReport(new Uint8Array([0x03, 0x4d, 0x40, 0x01, 0x64])), null);
 });
 
 function sizedReport(reportId: number, byteLength: number): HIDReportInfo {
@@ -306,7 +311,7 @@ test("an X11 receiver whose config channel the browser exposes is X11, not R1", 
   assert.equal(sent[0].reportId, 0x04);
   assert.equal(sent[0].data.length, 51);
 
-  assert.equal(status.name, "Attack Shark X11");
+  assert.equal(status.name, "Attack Shark mouse (2.4 GHz receiver)");
   const battery = new Uint8Array([0x20, 0x40, 0x01, 0x64]);
   listeners.get("inputreport")?.({ reportId: 0x03, data: new DataView(battery.buffer) });
   const identified = await client.readStatus();
@@ -323,13 +328,46 @@ test("unknown receiver model ids neither rename the unit nor count as battery", 
   const { unit, listeners } = linuxX11Receiver(51);
   const client = new AttackSharkHidClient(unit, { batteryWaitMs: 0 });
   await client.readStatus();
-  // 0x85 is the X6, whose battery uses a 1-10 scale.
-  const other = new Uint8Array([0x85, 0x40, 0x01, 0x07]);
+  const other = new Uint8Array([0x21, 0x40, 0x01, 0x07]);
   listeners.get("inputreport")?.({ reportId: 0x03, data: new DataView(other.buffer) });
   const status = await client.readStatus();
-  assert.equal(status.name, "Attack Shark X11");
+  assert.equal(status.name, "Attack Shark mouse (2.4 GHz receiver)");
   assert.equal(status.brand, "Attack Shark");
   assert.equal(status.batteryPercent, null);
+});
+
+// The 0xfa60 receiver and the wired PIDs are shared across the platform: an
+// R1 on its dongle and an X3 by cable enumerate exactly like an X11.
+test("the receiver's model id names the mouse, never the PID", async () => {
+  resetAttackSharkX11RuntimeState();
+  const { unit, listeners } = linuxX11Receiver(51);
+  const client = new AttackSharkHidClient(unit, { batteryWaitMs: 0 });
+  assert.equal((await client.readStatus()).name, "Attack Shark mouse (2.4 GHz receiver)");
+
+  const r1 = new Uint8Array([0x10, 0x40, 0x01, 0x07]);
+  listeners.get("inputreport")?.({ reportId: 0x03, data: new DataView(r1.buffer) });
+  const status = await client.readStatus();
+  assert.equal(status.name, "Attack Shark R1");
+  assert.equal(status.brand, "Attack Shark");
+  assert.equal(status.batteryPercent, 70);
+
+  resetAttackSharkX11RuntimeState();
+  const x3 = new Uint8Array([0x4d, 0x50, 0x00, 0x06]);
+  listeners.get("inputreport")?.({ reportId: 0x03, data: new DataView(x3.buffer) });
+  const identified = await client.readStatus();
+  assert.equal(identified.name, "Attack Shark X3");
+  assert.equal(identified.batteryPercent, null);
+
+  // With no battery scale to wait for, a named X3 skips the battery wait.
+  const patient = new AttackSharkHidClient(unit, { batteryWaitMs: 10_000 });
+  const started = Date.now();
+  await patient.readStatus();
+  assert.ok(Date.now() - started < 1_000);
+
+  for (const productId of [0xfa55, 0xfa61]) {
+    const wired = new AttackSharkHidClient(x11Entry(productId, [[0x01, 0x80], [0x0c, 0x01]]));
+    assert.equal(wired.displayName(), "Attack Shark mouse (wired)");
+  }
 });
 
 test("the declared DPI report length picks the 56-byte receiver form", async () => {
