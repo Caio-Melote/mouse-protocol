@@ -278,6 +278,8 @@ export interface MouseStatus {
   eggPollingDivider?: number;
   eggMulticlickFilters?: number[];
   eggButtonMappings?: string[];
+  eggGlassMode?: boolean;
+  eggSupportsGlassMode?: boolean;
   /**
    * Every shipped Razer control's current state, keyed by control name — the
    * four cross-assignable `RazerButtonControl`s and the three two-state

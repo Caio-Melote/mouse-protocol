@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { EggOp1HidClient } from "./egg-op1-hid.ts";
 import { EggWeHidClient } from "./egg-we-hid.ts";
 
 import {
@@ -50,6 +51,12 @@ test("a 0x1970 receiver exposing the OP1-8K command report is left for EggOp1Hid
 
   const op1w4kV2Dongle = hidDevice(0x1970, "", [0xa1]);
   assert.equal(EggWeHidClient.isSupported(op1w4kV2Dongle), false);
+});
+
+test("a cabled XM2w 4K v2 (0x1982, also an XM2we receiver PID) exposing 0xa1 is left for EggOp1HidClient", () => {
+  assert.equal(EggWeHidClient.isSupported(hidDevice(0x1982, "", [0xa1])), false);
+  assert.equal(EggOp1HidClient.isSupported(hidDevice(0x1982, "", [0xa1])), true);
+  assert.equal(EggWeHidClient.isSupported(hidDevice(0x1982)), true);
 });
 
 test("sibling interfaces of a 4K v2 dongle are not picked as WE (ticket #0126)", () => {
