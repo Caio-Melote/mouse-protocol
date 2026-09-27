@@ -47,6 +47,19 @@ const LOD_V2 = [
   "1.3 mm", "1.4 mm", "1.5 mm", "1.6 mm", "1.7 mm",
 ] as const;
 const LOD_GLASS = ["1.0 mm", "2.0 mm"] as const;
+const WIRELESS_4K_V2 = {
+  configFamily: "v2",
+  sensorFamily: "paw3950",
+  cpiMin: 10,
+  cpiMax: 30_000,
+  cpiStepLow: 10,
+  cpiStepHigh: 50,
+  lodNormal: LOD_V2,
+  lodGlass: LOD_GLASS,
+  motionSyncAt8k: true,
+  maxPollingHz: 4000,
+  wireless4k: true,
+} as const;
 
 export const EGG_DEVICE_PROFILES: ReadonlyMap<number, EggDeviceProfile> = new Map([
   [0x1964, {
@@ -120,47 +133,15 @@ export const EGG_DEVICE_PROFILES: ReadonlyMap<number, EggDeviceProfile> = new Ma
     maxPollingHz: 8000,
   }],
   // OP1w/XM2w 4K v2: first wireless models on the OP1-8K v2 config protocol.
-  // The dongle's own USB PID (0x1970) is reused from the older, unrelated
-  // OP1we (see egg-we-hid.ts) — descriptor-based detection there keeps the
-  // two drivers from both claiming it. See issue #107. That same dongle PID
-  // (and its 0x1984 successor) is ALSO shared between the OP1w and XM2w 4K v2
-  // mice themselves — confirmed on real hardware (an XM2w 4K v2 reports as
-  // "Endgame Gear OP1we", the receiver's fixed USB descriptor string, with no
-  // "xm2" anywhere in it). WebHID has no way to tell them apart: the
-  // descriptor name is generic and fixed regardless of the paired mouse, and
-  // nothing in the config/firmware read protocol carries a model id. Rather
-  // than confidently claim the wrong specific model, this profile's name
-  // says both, until a real distinguishing signal turns up.
-  [0x1984, {
-    pid: 0x1984,
-    name: "Endgame Gear OP1w/XM2w 4K v2",
-    configFamily: "v2",
-    sensorFamily: "paw3950",
-    cpiMin: 10,
-    cpiMax: 30_000,
-    cpiStepLow: 10,
-    cpiStepHigh: 50,
-    lodNormal: LOD_V2,
-    lodGlass: LOD_GLASS,
-    motionSyncAt8k: true,
-    maxPollingHz: 4000,
-    wireless4k: true,
-  }],
-  [0x1970, {
-    pid: 0x1970,
-    name: "Endgame Gear OP1w/XM2w 4K v2",
-    configFamily: "v2",
-    sensorFamily: "paw3950",
-    cpiMin: 10,
-    cpiMax: 30_000,
-    cpiStepLow: 10,
-    cpiStepHigh: 50,
-    lodNormal: LOD_V2,
-    lodGlass: LOD_GLASS,
-    motionSyncAt8k: true,
-    maxPollingHz: 4000,
-    wireless4k: true,
-  }],
+  // Cabled, each mouse has its own PID (OP1w 0x1984, XM2w 0x1982, the latter
+  // from the XM2w vendor tool's binary only). The 2.4 GHz dongle is 0x1970 for
+  // both, reused from the older, unrelated OP1we (see egg-we-hid.ts, which
+  // uses the descriptor to keep the two drivers apart, issue #107), and its
+  // USB name is fixed whatever mouse is paired. Its profile name stays neutral
+  // until the mouse-info command (EGG_OPERATION.mouseInfo) reports which one.
+  [0x1984, { pid: 0x1984, name: "Endgame Gear OP1w 4K v2", ...WIRELESS_4K_V2 }],
+  [0x1982, { pid: 0x1982, name: "Endgame Gear XM2w 4K v2", ...WIRELESS_4K_V2 }],
+  [0x1970, { pid: 0x1970, name: "Endgame Gear OP1w/XM2w 4K v2", ...WIRELESS_4K_V2 }],
 ]);
 
 export const EGG_REPORT = {
@@ -177,6 +158,8 @@ export const EGG_OPERATION = {
   writeSensor: 0x14,
   writePower: 0x15,
   writeButtons: 0x16,
+  /** 4K v2: the mouse's own VID/PID and firmware, answered by the mouse even through the dongle. */
+  mouseInfo: 0x0e,
 } as const;
 
 export const EGG_OFFSET = {
@@ -202,7 +185,12 @@ export const EGG_4K_OFFSET = {
   angleTuning: 17,
   /** Force max FPS is a filterFlags bit here, not a byte. */
   forceMaxFpsFlag: 0x40,
+  /** The polling byte is a vendor enum here; this one is 1000 Hz with wireless power saving. */
+  powerSavePolling: 0x80,
 } as const;
+
+/** The only rates the 4K v2 vendor tool writes; 125 Hz is its "Office Mode" (0x40). */
+export const EGG_4K_POLLING_RATES = [125, 1000, 2000, 4000] as const;
 
 export interface EggBlockWrite {
   command: number;

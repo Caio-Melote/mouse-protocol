@@ -1,6 +1,7 @@
 import type { MouseStatus } from "../mouse-types.ts";
 import {
   EGG_4K_OFFSET,
+  EGG_4K_POLLING_RATES,
   EGG_BUTTON_ACTION_OPTIONS,
   EGG_COMMAND_SIZE,
   EGG_CONFIG_SIZE,
@@ -38,7 +39,7 @@ export interface EggOp1Status extends MouseStatus {
   eggCpiMax: number;
   eggCpiStepLow: number;
   eggCpiStepHigh: number;
-  eggPollingDivider: number;
+  eggPollingDivider?: number;
   eggLodIndex: number;
   eggLodOptions: string[];
   eggMulticlickFilters: number[];
@@ -87,6 +88,7 @@ export class EggOp1HidClient {
   private configPayloadLength = EGG_CONFIG_SIZE - 1;
   private commandPayloadLength = EGG_COMMAND_SIZE - 1;
   private firmwareVersion: string | null | undefined;
+  private pairedName: string | undefined;
 
   readonly profile: EggDeviceProfile;
   onDeviceChange?: () => void;
@@ -153,6 +155,10 @@ export class EggOp1HidClient {
     if (this.firmwareVersion === undefined) {
       this.firmwareVersion = await this.readFirmware().catch(() => null);
     }
+    // Retried on each read until the mouse answers: over the dongle it sleeps quickly.
+    if (this.profile.wireless4k && this.pairedName === undefined) {
+      this.pairedName = await this.readPairedName().catch(() => undefined);
+    }
     const glassMode = this.profile.lodGlass !== null && config[EGG_OFFSET.glassMode] !== 0;
     const lodOptions = eggLodOptions(this.profile, glassMode);
     const lodIndex = config[EGG_OFFSET.lod] - this.lodBase(glassMode);
@@ -162,7 +168,7 @@ export class EggOp1HidClient {
       this.decodePhysicalButtonAction(config, index as EggButtonIndex, leftHanded));
     return {
       brand: "Endgame Gear",
-      name: this.profile.name,
+      name: this.pairedName ?? this.profile.name,
       batteryPercent: null,
       batteryState: "Unknown",
       dpi,
@@ -190,7 +196,8 @@ export class EggOp1HidClient {
         const offset = EGG_OFFSET.firstCpiSplit + level * 5;
         return { x: eggReadUint16LE(config, offset + 1), y: eggReadUint16LE(config, offset + 3) };
       }),
-      eggPollingDivider: config[EGG_OFFSET.pollingDivider],
+      // The 4K v2 polling byte is a vendor enum, so a free divider does not apply there.
+      eggPollingDivider: this.profile.wireless4k ? undefined : config[EGG_OFFSET.pollingDivider],
       eggLodIndex: lodIndex,
       eggLodOptions: [...lodOptions],
       eggGlassMode: glassMode,
@@ -239,8 +246,9 @@ export class EggOp1HidClient {
     return dpi;
   }
 
-  /** RF dongles (e.g. OP1w 4K v2) are capped below the 8000 Hz wired ceiling. */
+  /** The 4K v2 takes only its vendor enum values; wired 8K models use any 8000 / rate divider. */
   supportedPollingRates(): number[] {
+    if (this.profile.wireless4k) return [...EGG_4K_POLLING_RATES];
     return EGG_POLLING_RATES.filter((rate) => rate <= this.profile.maxPollingHz);
   }
 
@@ -387,6 +395,7 @@ export class EggOp1HidClient {
   }
 
   async setCustomPollingDivider(divider: number): Promise<void> {
+    if (this.profile.wireless4k) throw new Error(`${this.profile.name} only accepts its listed polling rates.`);
     if (!Number.isInteger(divider) || divider < 1 || divider > 255) throw new Error("Polling divider must be an integer from 1 to 255.");
     const confirmed = await this.updateConfig((config) => {
       if (this.profile.lodGlass !== null && config[EGG_OFFSET.glassMode] !== 0) {
@@ -664,6 +673,29 @@ export class EggOp1HidClient {
     });
   }
 
+  /**
+   * The dongle's USB IDs are the same whichever 4K v2 is paired; the mouse-info
+   * reply carries the mouse's own VID/PID at payload +0/+2. Undefined while the
+   * mouse does not answer, so the caller can retry.
+   */
+  private readPairedName(): Promise<string | undefined> {
+    return this.run(async () => {
+      await this.open();
+      await this.sendCommand(EGG_OPERATION.mouseInfo);
+      await this.delay(50);
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const reply = (await this.receiveFeature(EGG_REPORT.command, EGG_COMMAND_SIZE, this.commandPayloadLength)).bytes;
+        if (reply[1] === STATUS_OK && eggReadUint16LE(reply, 16) === EGG_VENDOR_ID) {
+          const paired = EGG_DEVICE_PROFILES.get(eggReadUint16LE(reply, 18));
+          return paired?.wireless4k ? paired.name : this.profile.name;
+        }
+        if (reply[1] !== STATUS_BUSY) return undefined;
+        await this.delay(100);
+      }
+      return undefined;
+    });
+  }
+
   private async sendCommand(operation: number, header: number[] = [], payload?: Uint8Array): Promise<void> {
     const command = new Uint8Array(this.commandPayloadLength);
     command.set([operation, ...header]);
@@ -732,6 +764,7 @@ export class EggOp1HidClient {
 
   private decodePollingRate(divider: number): number {
     if (!divider) throw new Error("The mouse reported an invalid polling-rate divider.");
+    if (this.profile.wireless4k && divider === EGG_4K_OFFSET.powerSavePolling) return 1000;
     return 8000 / divider;
   }
 

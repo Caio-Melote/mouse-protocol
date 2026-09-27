@@ -27,7 +27,8 @@ const hex = (bytes: ArrayLike<number>): string =>
  * 0x07 and applies block writes using the layout in johanneszab/endgame-op1w
  * re/PROTOCOL.md section 4, written out independently of eggBlockWrites.
  */
-function fake4kV2() {
+function fake4kV2({ productId = 0x1984, pairedPid = productId as number | null } = {}) {
+  const state = { pairedPid };
   const blob = new Uint8Array(1024);
   blob.set(REPORTED_BLOB);
   const writes: string[] = [];
@@ -39,7 +40,7 @@ function fake4kV2() {
   };
   const device = {
     vendorId: 0x3367,
-    productId: 0x1984,
+    productId,
     productName: "OP1w 4k v2 Wireless Gaming Mouse",
     opened: true,
     collections: [{
@@ -67,6 +68,11 @@ function fake4kV2() {
       const payload = bytes.subarray(15);
       if (command === 0x12) return answer(0x01);
       if (command === 0x02) return answer(0x01, [...new Array(15).fill(0), 0x07, 0x01]);
+      if (command === 0x0e) {
+        // Mouse asleep behind the dongle: status 0x08, no identity.
+        if (state.pairedPid === null) return answer(0x08);
+        return answer(0x01, [...new Array(14).fill(0), 0x67, 0x33, state.pairedPid & 0xff, state.pairedPid >> 8]);
+      }
       writes.push(`${hex(bytes.subarray(0, 6))} | ${hex(payload.subarray(0, command === 0x15 ? 11 : 28))}`);
       if (command === 0x14) {
         [0x07, 0x08, 0x09, 0x0a, 0x0b, 0x01, 0x0e, 0x0d].forEach((offset, index) => { blob[offset] = payload[index]; });
@@ -90,6 +96,7 @@ function fake4kV2() {
   return {
     device: device as unknown as HIDDevice,
     blob,
+    state,
     writes,
     stores: () => stores,
   };
@@ -150,4 +157,30 @@ test("OP1w 4K v2 glass mode rescales lift-off like the vendor tool and sends bot
   assert.equal(status.eggGlassMode, false);
   assert.equal(status.liftOffDistance, "Medium");
   assert.equal(mouse.stores(), 0);
+});
+
+test("OP1w 4K v2 polling follows the vendor enum: 0x80 reads as 1000 Hz and free dividers are refused", async () => {
+  const mouse = fake4kV2();
+  mouse.blob[0x05] = 0x80; // 1000 Hz with wireless power saving
+  const client = new EggOp1HidClient(mouse.device);
+
+  const status = await client.readStatus();
+  assert.equal(status.pollingRateHz, 1000);
+  assert.deepEqual(status.supportedPollingRates, [125, 1000, 2000, 4000]);
+  assert.equal(status.eggPollingDivider, undefined);
+  await assert.rejects(client.setPollingRate(500), /Unsupported/);
+  await assert.rejects(client.setCustomPollingDivider(16), /listed polling rates/);
+  assert.deepEqual(mouse.writes, []);
+});
+
+test("over the shared 0x1970 dongle, the mouse-info reply names the paired 4K v2", async () => {
+  const xm2w = fake4kV2({ productId: 0x1970, pairedPid: 0x1982 });
+  assert.equal((await new EggOp1HidClient(xm2w.device).readStatus()).name, "Endgame Gear XM2w 4K v2");
+
+  // Asleep: keep the neutral name, then pick up the model once the mouse answers.
+  const sleepy = fake4kV2({ productId: 0x1970, pairedPid: null });
+  const client = new EggOp1HidClient(sleepy.device);
+  assert.equal((await client.readStatus()).name, "Endgame Gear OP1w/XM2w 4K v2");
+  sleepy.state.pairedPid = 0x1984;
+  assert.equal((await client.readStatus()).name, "Endgame Gear OP1w 4K v2");
 });
