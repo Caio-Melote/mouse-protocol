@@ -423,7 +423,11 @@ fact: capture the same G HUB diff on another format before trusting it.
 
 Transport limits stay where they are. The Superstrike's 1 kHz cap over USB is a
 property of that USB interface, not of its profile format, so it is still keyed
-on the product id.
+on the product id - now on the mouse's own reported USB transport id, through
+`reportRateCapabilitiesFor`. The PRO X 3 Superstrike (C0A9) shares format 8 but
+not the cap: on the cable its 0x8061 feature advertises every rate through 8000
+Hz (mask 0x7f, the same as wirelessly), so its cable ceiling is lifted to 8000.
+The PRO X 2 (C0A8) keeps 1 kHz until it shows the same.
 
 ### Per-format additions
 
@@ -703,3 +707,15 @@ but nothing should ever write them in a loop or on a restore path.
 Offsets are format-specific; never apply one format's layout to another. Only
 ship writes for devices tested on real hardware. Decoding and dumping other
 formats is safe; writing on inference is not.
+
+### HITS settings are stored in the profile (format 8)
+
+The HITS tuning feature (0x1B0C) only changes the mouse's working values. What it
+loads at power-on is the profile's `analog_button` block at offset 0x26: one
+three-byte entry per primary button, holding the same bytes the live feature
+uses (`actuation << 2`, `rapid trigger << 2 | on`, `haptics << 2`). Three PRO X 3
+Superstrike captures show it: the stored block read `14 08 0c 14 08 0c` every
+time (actuation 5, sensitivity 2 off, haptics 3) while the live values differed
+and while a live-only apply came back to it after a power cycle. A HITS change
+is therefore written both ways: the live feature for immediate effect, and
+`persistAnalogButtonTuning` for the profile, in one sector write.

@@ -144,8 +144,10 @@ export class EggWeHidClient {
     // The OP1-8K command report sits on one interface of the 4K v2 dongle
     // only; its sibling interfaces pass isSupported on their own. Decide per
     // product: if any interface of this VID/PID speaks OP1-8K, none is WE.
+    // Only Endgame devices can contribute to the exclusion set, so skip the
+    // descriptor walk for every other vendor.
     const op1Products = new Set(devices
-      .filter((device) => this.hasOp1EightKCommandReport(device))
+      .filter((device) => device.vendorId === EGG_VENDOR_ID && this.hasOp1EightKCommandReport(device))
       .map((device) => `${device.vendorId}:${device.productId}`));
     const we = devices.filter((device) =>
       this.isSupported(device) && !op1Products.has(`${device.vendorId}:${device.productId}`));
@@ -558,13 +560,13 @@ export class EggWeHidClient {
 
   private static usagePages(device: HIDDevice): Set<number> {
     const pages = new Set<number>();
-    const visit = (collections: readonly HIDCollectionInfo[]): void => {
-      for (const collection of collections) {
+    const visit = (collections: readonly HIDCollectionInfo[] | undefined | null): void => {
+      for (const collection of collections ?? []) {
         pages.add(collection.usagePage);
-        visit(collection.children);
+        visit(collection.children ?? []);
       }
     };
-    visit(device.collections);
+    visit(device.collections ?? []);
     return pages;
   }
 
@@ -581,18 +583,18 @@ export class EggWeHidClient {
     kind: "featureReports" | "inputReports",
   ): ReportTarget[] {
     const found: ReportTarget[] = [];
-    const visit = (collections: readonly HIDCollectionInfo[]): void => {
-      for (const collection of collections) {
-        for (const report of collection[kind]) {
+    const visit = (collections: readonly HIDCollectionInfo[] | undefined | null): void => {
+      for (const collection of collections ?? []) {
+        for (const report of collection[kind] ?? []) {
           found.push({
             reportId: report.reportId,
             payloadLength: this.reportPayloadLength(report),
           });
         }
-        visit(collection.children);
+        visit(collection.children ?? []);
       }
     };
-    visit(device.collections);
+    visit(device.collections ?? []);
     return found;
   }
 

@@ -115,6 +115,7 @@ export const VENDOR_ID = {
   endgameGear: 0x3367,
   wlmouse: 0x36a7,
   lamzu: 0x373e,
+  bytech: 0x372e,
   lamzuInca: LAMZU_INCA_VENDOR_ID,
   attackshark: 0x373e,
   logitech: 0x046d,
@@ -320,6 +321,12 @@ export const KEYCHRON_NAPE_HID_FILTERS: HIDDeviceFilter[] = KEYCHRON_NAPE_PRODUC
 export const KEYCHRON_M6_HID_FILTERS: HIDDeviceFilter[] = [
   { vendorId: VENDOR_ID.keychron, productId: 0xd060, usagePage: 0xffc1, usage: 0x01 },
   { vendorId: VENDOR_ID.keychron, productId: 0xd029, usagePage: 0xffc1, usage: 0x01 },
+];
+
+// Keychron 4K mice and their receiver. No product ID: the receiver's is unknown,
+// and Launcher treats any Keychron device with this collection as a 4K mouse.
+export const KEYCHRON_4K_HID_FILTERS: HIDDeviceFilter[] = [
+  { vendorId: VENDOR_ID.keychron, usagePage: 0xff0a, usage: 0x01 },
 ];
 
 // moddoMOUSE exposes its vendor config interface on usage page 0xff, usage 0x01
@@ -719,6 +726,7 @@ export const SUPPORTED_HID_FILTERS: HIDDeviceFilter[] = [
   // interfaces that lack the feature-report-0 control channel.
   { vendorId: VENDOR_ID.lamzu },
   ...LAMZU_INCA_HID_FILTERS,
+  { vendorId: VENDOR_ID.bytech, usagePage: 0xff00, usage: 0x0001 },
   { vendorId: VENDOR_ID.orbital, usagePage: 0xff0a, usage: 1 },
   ...[...RAWM_PRODUCT_IDS].map((productId) => ({
     vendorId: VENDOR_ID.rawm,
@@ -763,6 +771,7 @@ export const SUPPORTED_HID_FILTERS: HIDDeviceFilter[] = [
   ...RAZER_COBRA_FILTERS,
   ...KEYCHRON_NAPE_HID_FILTERS,
   ...KEYCHRON_M6_HID_FILTERS,
+  ...KEYCHRON_4K_HID_FILTERS,
   ...RAZER_REGISTRY_FILTERS,
   ...RAZER_DEATHADDER_V2_FILTERS,
   ...EGG_WE_HID_FILTERS,
