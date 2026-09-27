@@ -33,6 +33,12 @@ export interface EggDeviceProfile {
   motionSyncAt8k: boolean;
   /** Wired 8K models top out at 8000 Hz; wireless dongles are RF-limited to 4000 Hz. */
   maxPollingHz: number;
+  /**
+   * OP1w/XM2w 4K v2 firmware: refuses the whole-blob store (status 0x07) and
+   * takes block writes instead (eggBlockWrites), keeps angle tuning and force
+   * max FPS at their own offsets, and stores glass-mode LOD in whole millimetres.
+   */
+  wireless4k?: true;
 }
 
 const LOD_V1 = ["0.7 mm", "1 mm", "2 mm"] as const;
@@ -135,9 +141,10 @@ export const EGG_DEVICE_PROFILES: ReadonlyMap<number, EggDeviceProfile> = new Ma
     cpiStepLow: 10,
     cpiStepHigh: 50,
     lodNormal: LOD_V2,
-    lodGlass: null,
+    lodGlass: LOD_GLASS,
     motionSyncAt8k: true,
     maxPollingHz: 4000,
+    wireless4k: true,
   }],
   [0x1970, {
     pid: 0x1970,
@@ -149,9 +156,10 @@ export const EGG_DEVICE_PROFILES: ReadonlyMap<number, EggDeviceProfile> = new Ma
     cpiStepLow: 10,
     cpiStepHigh: 50,
     lodNormal: LOD_V2,
-    lodGlass: null,
+    lodGlass: LOD_GLASS,
     motionSyncAt8k: true,
     maxPollingHz: 4000,
+    wireless4k: true,
   }],
 ]);
 
@@ -166,6 +174,9 @@ export const EGG_OPERATION = {
   store: 0x11,
   load: 0x12,
   factoryReset: 0x13,
+  writeSensor: 0x14,
+  writePower: 0x15,
+  writeButtons: 0x16,
 } as const;
 
 export const EGG_OFFSET = {
@@ -185,6 +196,44 @@ export const EGG_OFFSET = {
   angleTuning: 128,
   forceMaxFps: 129,
 } as const;
+
+/** Where the wireless4k firmware keeps fields that differ from EGG_OFFSET. */
+export const EGG_4K_OFFSET = {
+  angleTuning: 17,
+  /** Force max FPS is a filterFlags bit here, not a byte. */
+  forceMaxFpsFlag: 0x40,
+} as const;
+
+export interface EggBlockWrite {
+  command: number;
+  declaredLength: number;
+  /** 1-based chunk index for the two halves of the button table, else 0. */
+  chunk: number;
+  payload: Uint8Array;
+}
+
+/**
+ * The three block writes the OP1w/XM2w 4K v2 vendor tool uses instead of the
+ * whole-blob store, built from a config buffer. Layout decoded from the vendor
+ * tool and USB captures in johanneszab/endgame-op1w (re/PROTOCOL.md section 4);
+ * its blob offsets sit 16 bytes into our buffer. The power block carries 11
+ * bytes but declares 10, exactly like the vendor tool: byte 11 is glass mode.
+ */
+export function eggBlockWrites(config: Uint8Array): EggBlockWrite[] {
+  const at = (offset: number): number => config[16 + offset];
+  const sensor = new Uint8Array(28);
+  sensor.set([at(0x07), at(0x08), at(0x09), at(0x0a), at(0x0b), at(0x01), at(0x0e), at(0x0d)]);
+  sensor.set(config.subarray(16 + 0x23, 16 + 0x37), 8);
+  const filters = [0, 1, 2, 3, 4].map((button) => at(0x3d + button * 7));
+  const power = Uint8Array.of(at(0x0c), at(0x05), at(0x06), at(0x04), ...filters, at(0x03), at(0x6f));
+  const buttons = config.slice(16 + 0x37, 16 + 0x6f);
+  return [
+    { command: EGG_OPERATION.writeSensor, declaredLength: 28, chunk: 0, payload: sensor },
+    { command: EGG_OPERATION.writePower, declaredLength: 10, chunk: 0, payload: power },
+    { command: EGG_OPERATION.writeButtons, declaredLength: 28, chunk: 1, payload: buttons.subarray(0, 28) },
+    { command: EGG_OPERATION.writeButtons, declaredLength: 28, chunk: 2, payload: buttons.subarray(28) },
+  ];
+}
 
 export const EGG_CONFIG_SIZE = 1041;
 export const EGG_COMMAND_SIZE = 64;
