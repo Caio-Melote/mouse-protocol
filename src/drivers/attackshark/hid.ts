@@ -18,7 +18,8 @@ import {
 
 // Attack Shark mice ship from multiple OEMs with different VIDs and protocols:
 //
-//   0x1d57 — R1, X11 family: HID feature reports, 250 ms cmd delay
+//   0x1d57 — R1, X11, X3, X6 and more on shared PIDs: HID feature reports,
+//            250 ms cmd delay; the model id rides in receiver messages
 //   0x25a7 — X3, X6, X8, X11 direct: GearHub-derived protocol (report 0, 64 B)
 //   0x373e — R5 Ultra, R3 (Lamzu OEM) — usagePage 0xffff feature reports
 //
@@ -75,18 +76,46 @@ const DPI_READ_REPORT_ID = 0xa0;
 
 // Receiver messages arrive as input report 0x03: [0x03, model, event, p1, p2].
 // Byte 1 is the paired mouse's model id (HarukaYamamoto0/attack-shark-x11-driver
-// docs/messages/README.md); battery is event 0x40 with p1 = 0x01, p2 = percent.
-// Only models whose battery percentage was checked are listed; other models
-// in the family use other scales (the X6 reports 1-10).
+// docs/messages/README.md). The PIDs are shared across the whole platform, so
+// this byte is the only thing that names the mouse. Battery is event 0x40 with
+// p1 = 0x01; p2's scale differs per model, so only models whose scale was
+// checked carry `battery` (the others are named but report no battery).
 const BATTERY_REPORT_ID = 0x03;
 
-const X11_MODEL_ID = 0x55;
+interface ReceiverModel {
+  brand: "Attack Shark" | "Delux";
+  name: string;
+  battery?: "percent" | "tenths";
+}
 
-/** Models identified by the model id their receiver messages carry. */
-const X11_RECEIVER_MODELS: ReadonlyMap<number, { brand: "Attack Shark" | "Delux"; name: string }> = new Map([
-  [X11_MODEL_ID, { brand: "Attack Shark", name: "Attack Shark X11" }],
+const attackShark = (model: string, battery?: ReceiverModel["battery"]): ReceiverModel =>
+  ({ brand: "Attack Shark", name: `Attack Shark ${model}`, battery });
+
+/**
+ * Models identified by the model id their receiver messages carry. Attack
+ * Shark ids: HarukaYamamoto0/attack-shark-x11-driver src/core/devices.ts.
+ */
+const X11_RECEIVER_MODELS: ReadonlyMap<number, ReceiverModel> = new Map([
+  [0x55, attackShark("X11", "percent")],
+  // xb-bx/attack-shark-r1-driver reports charge as p2 * 10.
+  [0x10, attackShark("R1", "tenths")],
+  [0x85, attackShark("X6", "tenths")],
+  [0x4d, attackShark("X3")],
+  [0x4e, attackShark("X3 Max")],
+  [0x01, attackShark("X3 Pro")],
+  [0x07, attackShark("X11 SE")],
+  [0xbe, attackShark("X11 Pro")],
+  [0xb1, attackShark("X1")],
+  [0x02, attackShark("X8 SE")],
+  [0x06, attackShark("X8 Plus")],
+  [0x08, attackShark("X8 Pro")],
+  [0x04, attackShark("G3")],
+  [0x0e, attackShark("G3 Pro")],
+  [0x24, attackShark("V6")],
+  [0xe5, attackShark("V3 Pro")],
+  [0xea, attackShark("V3")],
   // docs/delux-m600-pro-testing.md
-  [DELUX_M600_PRO_MODEL_ID, { brand: "Delux", name: "Delux M600 Pro (Wireless)" }],
+  [DELUX_M600_PRO_MODEL_ID, { brand: "Delux", name: "Delux M600 Pro (Wireless)", battery: "percent" }],
 ]);
 
 // ── 0x25a7 protocol (GearHub / MU class) ─────────────────────────────────
@@ -165,20 +194,17 @@ function declaresInputReport(collection: HIDCollectionInfo, reportId: number): b
 
 // ── X11 family (config is native-only; battery is readable) ──────────────
 
-// Documented 0x1d57 PIDs: wired X11, wireless X11 receiver, R1.
-const X11_FAMILY_PIDS: ReadonlySet<number> = new Set([0xfa55, 0xfa60, 0xfa61]);
-
+// Documented 0x1d57 PIDs: two wired ones (0xfa55 on the X11, 0xfa61 on the R1)
+// and the 2.4 GHz receiver (0xfa60). None of them names a model: the R1's
+// receiver is 0xfa60 too, and the X3 and X6 enumerate under the same ids. Until
+// a receiver message names the mouse, say only what the PID proves.
 const X11_FAMILY_NAMES: ReadonlyMap<number, string> = new Map([
-  [0xfa55, "Attack Shark X11 (wired)"],
-  [0xfa60, "Attack Shark X11 (wireless receiver)"],
-  [0xfa61, "Attack Shark R1"],
+  [0xfa55, "Attack Shark mouse (wired)"],
+  [0xfa60, "Attack Shark mouse (2.4 GHz receiver)"],
+  [0xfa61, "Attack Shark mouse (wired)"],
 ]);
 
-const X11_FAMILY_MODELS: ReadonlyMap<number, string> = new Map([
-  [0xfa55, "Attack Shark X11"],
-  [0xfa60, "Attack Shark X11"],
-  [0xfa61, "Attack Shark R1"],
-]);
+const X11_FAMILY_PIDS: ReadonlySet<number> = new Set(X11_FAMILY_NAMES.keys());
 
 // The wireless receiver's interface 2 pushes battery packets on its own —
 // no command needed — so a read-only claim of that entry costs nothing and
@@ -283,7 +309,7 @@ export function attackSharkNativeOnlyMessage(devices: HIDDevice[]): string | nul
     (device) => device.vendorId === VID_1D57 && X11_FAMILY_PIDS.has(device.productId),
   );
   if (!unit) return null;
-  const name = X11_FAMILY_NAMES.get(unit.productId) ?? "Attack Shark X11";
+  const name = X11_FAMILY_NAMES.get(unit.productId) ?? "Attack Shark mouse";
   return `This ${name} cannot be configured through the browser: its settings channel `
     + "is on an interface the browser is not allowed to reach. To change DPI, polling "
     + "rate and lighting, install the OpenMouse Bridge, then open Interface settings "
@@ -473,7 +499,7 @@ export class AttackSharkHidClient {
   }
 
   /** The model a receiver message identified, if any. */
-  private get receiverModel(): { brand: "Attack Shark" | "Delux"; name: string } | undefined {
+  private get receiverModel(): ReceiverModel | undefined {
     if (this.family !== "1d57-x11") return undefined;
     const modelId = x11RuntimeFor(this.device.productId).modelId;
     return modelId === null ? undefined : X11_RECEIVER_MODELS.get(modelId);
@@ -485,11 +511,12 @@ export class AttackSharkHidClient {
     const identified = this.receiverModel;
     if (identified) return identified.name;
     // X11-family product strings are generic OEM labels ("2.4G Wireless
-    // Device", "USB Gaming Mouse"), so name those models by PID instead.
-    const model = this.device.vendorId === VID_1D57
-      ? X11_FAMILY_MODELS.get(this.device.productId)
+    // Device", "USB Gaming Mouse") and the PIDs are shared, so fall back to
+    // what the PID proves rather than guessing a model.
+    const generic = this.device.vendorId === VID_1D57
+      ? X11_FAMILY_NAMES.get(this.device.productId)
       : undefined;
-    if (model) return model;
+    if (generic) return generic;
     const name = this.device.productName?.trim();
     if (!name) return "Attack Shark";
     return /^attack\s*shark/i.test(name) ? name : `Attack Shark ${name}`;
@@ -628,7 +655,7 @@ export class AttackSharkHidClient {
       if (!this.x11ConfigReachable) {
         throw new Error(
           "This mouse's settings channel is not reachable from a browser; "
-          + "changing settings needs the native Attack Shark X11 driver.",
+          + "changing settings needs the OpenMouse Bridge or the desktop app.",
         );
       }
       // Native transport: the same 0x06 feature report the 0x1d57 (R1) path
@@ -670,7 +697,7 @@ export class AttackSharkHidClient {
       throw new Error(
         this.family === "1d57-x11"
           ? "This mouse's settings channel is not reachable from a browser; "
-            + "changing DPI needs the native Attack Shark X11 driver."
+            + "changing DPI needs the OpenMouse Bridge or the desktop app."
           : "DPI control is not yet implemented for this Attack Shark model.",
       );
     }
@@ -741,6 +768,8 @@ export class AttackSharkHidClient {
    */
   private async waitForX11Battery(runtime: X11RuntimeState): Promise<void> {
     if (runtime.batteryPercent !== null && Date.now() - runtime.batteryAt < X11_BATTERY_TTL_MS) return;
+    // A named model whose battery scale is unchecked never yields a reading.
+    if (this.receiverModel && !this.receiverModel.battery) return;
     const start = Date.now();
     const deadline = start + this.batteryWaitMs;
     while (Date.now() < deadline) {
@@ -946,7 +975,7 @@ export class AttackSharkHidClient {
   /** Check if an input report matches the battery signature. */
   static isBatteryReport(data: Uint8Array): boolean {
     return data[0] === BATTERY_REPORT_ID
-      && X11_RECEIVER_MODELS.has(data[1])
+      && X11_RECEIVER_MODELS.get(data[1])?.battery !== undefined
       && data[2] === 0x40
       && data[3] === 0x01;
   }
@@ -954,7 +983,8 @@ export class AttackSharkHidClient {
   /** Extract battery percentage from a battery input report. */
   static parseBatteryReport(data: Uint8Array): number | null {
     if (!AttackSharkHidClient.isBatteryReport(data)) return null;
-    const pct = data[4];
-    return pct >= 0 && pct <= 100 ? pct : null;
+    const value = data[4];
+    if (X11_RECEIVER_MODELS.get(data[1])?.battery === "tenths") return value <= 10 ? value * 10 : null;
+    return value <= 100 ? value : null;
   }
 }
