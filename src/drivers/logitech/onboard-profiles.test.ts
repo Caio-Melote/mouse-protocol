@@ -26,6 +26,7 @@ import {
   encodeReportRate,
   factoryProfileForFormat,
   supportsFactoryReset,
+  reportRateCapabilitiesFor,
   reportRatesFor,
   reportRatesForDevice,
   validateBunnyHoppingMs,
@@ -1243,4 +1244,41 @@ test("encodeDpiStages preserves the existing lift-off byte when writeLod is fals
   const encoded = encodeDpiStages(sector, 7, plan, undefined, false);
   assert.equal(encoded[base], 0x20); // x low byte (800 = 0x0320)
   assert.equal(encoded[base + 4], 0x02); // lift-off byte left untouched
+});
+
+test("the PRO X 3 Superstrike's cable carries the full rate range; the PRO X 2's stays at 1 kHz", () => {
+  // Same profile format (8), different USB interfaces. A PRO X 3 diagnostic on
+  // the cable advertises every rate through 8000 Hz (0x8061 mask 0x7f).
+  const x3 = reportRateCapabilitiesFor(8, "C0A9");
+  assert.deepEqual(x3, { wirelessMaxHz: 8000, wiredMaxHz: 8000 });
+  assert.deepEqual(reportRatesFor(x3, "wired"), [125, 250, 500, 1000, 2000, 4000, 8000]);
+  assert.equal(reportRateCapabilitiesFor(8, "c0a9")?.wiredMaxHz, 8000, "the transport id is case-insensitive");
+
+  const x2 = reportRateCapabilitiesFor(8, "C0A8");
+  assert.deepEqual(x2, { wirelessMaxHz: 8000, wiredMaxHz: 1000 });
+  assert.deepEqual(reportRatesFor(x2, "wired"), [125, 250, 500, 1000]);
+  assert.deepEqual(reportRatesFor(x2, "wireless"), [125, 250, 500, 1000, 2000, 4000, 8000]);
+});
+
+test("an unknown or unreported USB transport id keeps the format's own ceilings", () => {
+  assert.deepEqual(reportRateCapabilitiesFor(8, null), capabilitiesForFormat(8).reportRates);
+  assert.deepEqual(reportRateCapabilitiesFor(8, undefined), capabilitiesForFormat(8).reportRates);
+  assert.deepEqual(reportRateCapabilitiesFor(8, "FFFF"), capabilitiesForFormat(8).reportRates);
+  // A format whose ceilings were never captured stays unknown, whatever the id.
+  assert.equal(reportRateCapabilitiesFor(6, "C0A9"), null);
+  assert.equal(reportRateCapabilitiesFor(null, "C0A9"), null);
+});
+
+test("an 8000 Hz cable rate encodes for the PRO X 3 only, touching just that byte and the CRC", () => {
+  const x3 = reportRateCapabilitiesFor(8, "C0A9");
+  const written = encodeReportRate(SECTOR_1_SUPERSTRIKE, 8, "wired", 8000, x3);
+  const offset = layoutForFormat(8).reportRateWired!;
+  assert.equal(written[offset], 6, "8000 Hz is the last entry of the rate table");
+  assert.equal(profileCrc(written), storedCrc(written));
+  const changed = [...written.keys()].filter((index) => written[index] !== SECTOR_1_SUPERSTRIKE[index]);
+  assert.deepEqual(changed, [offset, written.length - 2, written.length - 1]);
+
+  // The PRO X 2's cable, and a caller that names no override, still refuse it.
+  assert.throws(() => encodeReportRate(SECTOR_1_SUPERSTRIKE, 8, "wired", 8000, reportRateCapabilitiesFor(8, "C0A8")));
+  assert.throws(() => encodeReportRate(SECTOR_1_SUPERSTRIKE, 8, "wired", 8000));
 });

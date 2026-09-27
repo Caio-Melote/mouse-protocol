@@ -163,7 +163,13 @@ export interface MouseStatus {
     maxActuation: number;
     maxRapidTrigger: number;
     maxHaptics: number;
-    buttons: Array<{ actuation: number; rapidTrigger: number; haptics: number }>;
+    buttons: Array<{
+      actuation: number;
+      rapidTrigger: number;
+      haptics: number;
+      /** Rapid trigger on/off (bit 0 of its byte). Absent when a driver cannot tell. */
+      rapidTriggerEnabled?: boolean;
+    }>;
   };
   pollingRateHz: number;
   supportedPollingRates?: number[];

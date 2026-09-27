@@ -423,7 +423,11 @@ fact: capture the same G HUB diff on another format before trusting it.
 
 Transport limits stay where they are. The Superstrike's 1 kHz cap over USB is a
 property of that USB interface, not of its profile format, so it is still keyed
-on the product id.
+on the product id - now on the mouse's own reported USB transport id, through
+`reportRateCapabilitiesFor`. The PRO X 3 Superstrike (C0A9) shares format 8 but
+not the cap: on the cable its 0x8061 feature advertises every rate through 8000
+Hz (mask 0x7f, the same as wirelessly), so its cable ceiling is lifted to 8000.
+The PRO X 2 (C0A8) keeps 1 kHz until it shows the same.
 
 ### Per-format additions
 
