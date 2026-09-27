@@ -108,10 +108,10 @@ export class EggOp1HidClient {
       && this.collectionHasFeatureReport(device.collections, EGG_REPORT.command);
   }
 
-  private static collectionHasFeatureReport(collections: readonly HIDCollectionInfo[], reportId: number): boolean {
-    return collections.some((collection) =>
-      collection.featureReports.some((report) => report.reportId === reportId)
-      || this.collectionHasFeatureReport(collection.children, reportId));
+  private static collectionHasFeatureReport(collections: readonly HIDCollectionInfo[] | undefined | null, reportId: number): boolean {
+    return (collections ?? []).some((collection) =>
+      (collection.featureReports ?? []).some((report) => report.reportId === reportId)
+      || this.collectionHasFeatureReport(collection.children ?? [], reportId));
   }
 
   async open(): Promise<void> {
@@ -123,8 +123,8 @@ export class EggOp1HidClient {
   }
 
   describeCollections(): string {
-    return this.device.collections.map((collection) => {
-      const reports = collection.featureReports.map((report) => `0x${report.reportId.toString(16)}`);
+    return (this.device.collections ?? []).map((collection) => {
+      const reports = (collection.featureReports ?? []).map((report) => `0x${report.reportId.toString(16)}`);
       return `usage 0x${collection.usagePage.toString(16)}:0x${collection.usage.toString(16)} · feature ${reports.join(", ") || "none"}`;
     }).join(" | ") || "No HID collections reported";
   }
@@ -672,15 +672,15 @@ export class EggOp1HidClient {
 
   private featurePayloadLength(reportId: number, fallback: number): number {
     const reports: HIDReportInfo[] = [];
-    const collect = (collections: readonly HIDCollectionInfo[]): void => {
-      for (const collection of collections) {
-        reports.push(...collection.featureReports.filter((report) => report.reportId === reportId));
-        collect(collection.children);
+    const collect = (collections: readonly HIDCollectionInfo[] | undefined | null): void => {
+      for (const collection of collections ?? []) {
+        reports.push(...(collection.featureReports ?? []).filter((report) => report.reportId === reportId));
+        collect(collection.children ?? []);
       }
     };
-    collect(this.device.collections);
+    collect(this.device.collections ?? []);
     for (const report of reports) {
-      const bits = report.items.reduce((sum, item) => sum + item.reportSize * item.reportCount, 0);
+      const bits = (report.items ?? []).reduce((sum, item) => sum + item.reportSize * item.reportCount, 0);
       if (bits > 0) return Math.ceil(bits / 8);
     }
     return fallback;

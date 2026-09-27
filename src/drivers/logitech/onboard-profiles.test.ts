@@ -23,9 +23,12 @@ import {
   encodeMacroButtonAssignment,
   encodeMacroSector,
   encodeProfileName,
+  decodeAnalogButtons,
+  encodeAnalogButtons,
   encodeReportRate,
   factoryProfileForFormat,
   supportsFactoryReset,
+  reportRateCapabilitiesFor,
   reportRatesFor,
   reportRatesForDevice,
   validateBunnyHoppingMs,
@@ -1243,4 +1246,80 @@ test("encodeDpiStages preserves the existing lift-off byte when writeLod is fals
   const encoded = encodeDpiStages(sector, 7, plan, undefined, false);
   assert.equal(encoded[base], 0x20); // x low byte (800 = 0x0320)
   assert.equal(encoded[base + 4], 0x02); // lift-off byte left untouched
+});
+
+test("the PRO X 3 Superstrike's cable carries the full rate range; the PRO X 2's stays at 1 kHz", () => {
+  // Same profile format (8), different USB interfaces. A PRO X 3 diagnostic on
+  // the cable advertises every rate through 8000 Hz (0x8061 mask 0x7f).
+  const x3 = reportRateCapabilitiesFor(8, "C0A9");
+  assert.deepEqual(x3, { wirelessMaxHz: 8000, wiredMaxHz: 8000 });
+  assert.deepEqual(reportRatesFor(x3, "wired"), [125, 250, 500, 1000, 2000, 4000, 8000]);
+  assert.equal(reportRateCapabilitiesFor(8, "c0a9")?.wiredMaxHz, 8000, "the transport id is case-insensitive");
+
+  const x2 = reportRateCapabilitiesFor(8, "C0A8");
+  assert.deepEqual(x2, { wirelessMaxHz: 8000, wiredMaxHz: 1000 });
+  assert.deepEqual(reportRatesFor(x2, "wired"), [125, 250, 500, 1000]);
+  assert.deepEqual(reportRatesFor(x2, "wireless"), [125, 250, 500, 1000, 2000, 4000, 8000]);
+});
+
+test("an unknown or unreported USB transport id keeps the format's own ceilings", () => {
+  assert.deepEqual(reportRateCapabilitiesFor(8, null), capabilitiesForFormat(8).reportRates);
+  assert.deepEqual(reportRateCapabilitiesFor(8, undefined), capabilitiesForFormat(8).reportRates);
+  assert.deepEqual(reportRateCapabilitiesFor(8, "FFFF"), capabilitiesForFormat(8).reportRates);
+  // A format whose ceilings were never captured stays unknown, whatever the id.
+  assert.equal(reportRateCapabilitiesFor(6, "C0A9"), null);
+  assert.equal(reportRateCapabilitiesFor(null, "C0A9"), null);
+});
+
+test("an 8000 Hz cable rate encodes for the PRO X 3 only, touching just that byte and the CRC", () => {
+  const x3 = reportRateCapabilitiesFor(8, "C0A9");
+  const written = encodeReportRate(SECTOR_1_SUPERSTRIKE, 8, "wired", 8000, x3);
+  const offset = layoutForFormat(8).reportRateWired!;
+  assert.equal(written[offset], 6, "8000 Hz is the last entry of the rate table");
+  assert.equal(profileCrc(written), storedCrc(written));
+  const changed = [...written.keys()].filter((index) => written[index] !== SECTOR_1_SUPERSTRIKE[index]);
+  assert.deepEqual(changed, [offset, written.length - 2, written.length - 1]);
+
+  // The PRO X 2's cable, and a caller that names no override, still refuse it.
+  assert.throws(() => encodeReportRate(SECTOR_1_SUPERSTRIKE, 8, "wired", 8000, reportRateCapabilitiesFor(8, "C0A8")));
+  assert.throws(() => encodeReportRate(SECTOR_1_SUPERSTRIKE, 8, "wired", 8000));
+});
+
+test("the stored HITS block reads back as the live values the mouse reports", () => {
+  // Bytes 0x26-0x2b of a real PRO X 3 Superstrike profile: 14 08 0c | 14 08 0c,
+  // i.e. actuation 5, sensitivity 2 with rapid trigger off, haptics 3, twice.
+  const stored = { actuation: 5, rapidTrigger: 2, haptics: 3, rapidTriggerEnabled: false };
+  assert.deepEqual(decodeAnalogButtons(SECTOR_1_SUPERSTRIKE, 8), [stored, stored]);
+  assert.equal(decodeAnalogButtons(SECTOR_1_SUPERSTRIKE, 7), null, "only format 8 and up carries the block");
+});
+
+test("saving HITS into a format 8 profile changes only those bytes and the CRC", () => {
+  // What a Both-buttons apply of actuation 8 / haptics 2 would store.
+  const values = { actuation: 8, rapidTrigger: 2, haptics: 2, rapidTriggerEnabled: false };
+  const written = encodeAnalogButtons(SECTOR_1_SUPERSTRIKE, 8, [{ button: 0, ...values }, { button: 1, ...values }]);
+  assert.equal(profileCrc(written), storedCrc(written));
+  assert.deepEqual(decodeAnalogButtons(written, 8), [values, values]);
+  const changed = [...written.keys()].filter((index) => written[index] !== SECTOR_1_SUPERSTRIKE[index]);
+  // 0x26 / 0x29 actuation, 0x28 / 0x2b haptics; the rapid-trigger bytes were already 0x08.
+  assert.deepEqual(changed, [0x26, 0x28, 0x29, 0x2b, written.length - 2, written.length - 1]);
+});
+
+test("HITS in the profile: one button at a time, the on/off bit, and the checks", () => {
+  // Only the right button changes; the left keeps its stored values.
+  const rightOnly = encodeAnalogButtons(SECTOR_1_SUPERSTRIKE, 8, [
+    { button: 1, actuation: 5, rapidTrigger: 3, haptics: 4, rapidTriggerEnabled: true },
+  ]);
+  assert.deepEqual(decodeAnalogButtons(rightOnly, 8), [
+    { actuation: 5, rapidTrigger: 2, haptics: 3, rapidTriggerEnabled: false },
+    { actuation: 5, rapidTrigger: 3, haptics: 4, rapidTriggerEnabled: true },
+  ]);
+  assert.equal(rightOnly[0x2a], 0x0d, "sensitivity 3 with the switch on, as G HUB writes it");
+
+  // Naming no state keeps the stored on/off bit, in either direction.
+  assert.equal(encodeAnalogButtons(rightOnly, 8, [{ button: 1, actuation: 5, rapidTrigger: 4, haptics: 4 }])[0x2a], 0x11);
+  assert.equal(encodeAnalogButtons(SECTOR_1_SUPERSTRIKE, 8, [{ button: 0, actuation: 5, rapidTrigger: 4, haptics: 3 }])[0x27], 0x10);
+
+  assert.throws(() => encodeAnalogButtons(SECTOR_1_SUPERSTRIKE, 7, [{ button: 0, actuation: 5, rapidTrigger: 2, haptics: 3 }]), /no analog button/);
+  assert.throws(() => encodeAnalogButtons(SECTOR_1_SUPERSTRIKE, 8, [{ button: 2, actuation: 5, rapidTrigger: 2, haptics: 3 }]), /left and right/);
+  assert.throws(() => encodeAnalogButtons(SECTOR_1_SUPERSTRIKE, 8, [{ button: 0, actuation: 64, rapidTrigger: 2, haptics: 3 }]), /outside/);
 });

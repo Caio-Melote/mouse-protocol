@@ -330,6 +330,12 @@ export const KEYCHRON_M6_HID_FILTERS: HIDDeviceFilter[] = [
   { vendorId: VENDOR_ID.keychron, productId: 0xd029, usagePage: 0xffc1, usage: 0x01 },
 ];
 
+// Keychron 4K mice and their receiver. No product ID: the receiver's is unknown,
+// and Launcher treats any Keychron device with this collection as a 4K mouse.
+export const KEYCHRON_4K_HID_FILTERS: HIDDeviceFilter[] = [
+  { vendorId: VENDOR_ID.keychron, usagePage: 0xff0a, usage: 0x01 },
+];
+
 // moddoMOUSE exposes its vendor config interface on usage page 0xff, usage 0x01
 // (older firmware answers on usage 0x02). Offer both so the picker lists the
 // control interface; the driver rejects anything without the config report.
@@ -772,6 +778,7 @@ export const SUPPORTED_HID_FILTERS: HIDDeviceFilter[] = [
   ...RAZER_COBRA_FILTERS,
   ...KEYCHRON_NAPE_HID_FILTERS,
   ...KEYCHRON_M6_HID_FILTERS,
+  ...KEYCHRON_4K_HID_FILTERS,
   ...RAZER_REGISTRY_FILTERS,
   ...RAZER_DEATHADDER_V2_FILTERS,
   ...EGG_WE_HID_FILTERS,
