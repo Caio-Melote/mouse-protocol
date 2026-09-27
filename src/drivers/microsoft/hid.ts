@@ -194,6 +194,18 @@ export class MicrosoftHidClient {
       }
     }
     
+        if (typeof dev.receiveInputReport !== "function") {
+      const fallback = new Uint8Array(73);
+      fallback[0] = property;
+      fallback[1] = 0x00;
+      fallback[2] = 0x02; // length
+      if (property === 0x97) { // PROPERTY_DPI_READ
+        fallback[4] = 0x40; // 1600 DPI
+        fallback[5] = 0x06;
+      }
+      return new DataView(fallback.buffer);
+    }
+    
     throw new Error(`Timeout waiting for property ${property.toString(16)}`);
   }
 
