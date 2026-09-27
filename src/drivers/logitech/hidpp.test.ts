@@ -458,6 +458,7 @@ function analogButtonsMouse(): { client: LogitechHidppClient; wire: number[][] }
       wire[button] = [request[4], request[5], request[6]];
       return successReply(deviceIndex, FEATURE_INDEX, 0x10, [button, request[4], request[5], request[6], 0x00]);
     }
+    if (fn === 3) return successReply(deviceIndex, FEATURE_INDEX, 0x30, [request[3], request[4], request[5]]);
     return null;
   };
   return { client, wire };
@@ -536,4 +537,41 @@ test("persisting HITS validates against the mouse's limits, then hands both butt
   const both = { actuation: 8, rapidTrigger: 2, haptics: 2, rapidTriggerEnabled: false };
   await client.persistAnalogButtonTuning([{ button: 0, ...both }, { button: 1, ...both }]);
   assert.deepEqual(writes, [{ analogButtons: [{ button: 0, ...both }, { button: 1, ...both }] }]);
+});
+
+test("HITS press depth events reach listeners and stop after unsubscribing", async () => {
+  const { client } = analogButtonsMouse();
+  await resolveIndex(client);
+  const internals = client as unknown as {
+    getFeature(id: number): Promise<unknown>;
+    deviceIndex: number;
+    onInputReport(event: { reportId: number; data: DataView }): void;
+  };
+  await internals.getFeature(0x1b0c);
+  const push = (feature: number, fn: number, left: number, right = 0) => {
+    const report = new Uint8Array([internals.deviceIndex, feature, fn, left, right, 0, 0]);
+    internals.onInputReport({ reportId: 0x11, data: new DataView(report.buffer) });
+  };
+  const seen: number[][] = [];
+  const stop = client.onAnalogPress((left, right) => seen.push([left, right]));
+  push(0x16, 0x00, 4);
+  push(0x16, 0x00, 0, 10);
+  push(0x16, 0x3b, 1); // a different event on the same feature
+  push(0x05, 0x00, 7); // another feature
+  stop();
+  push(0x16, 0x00, 2);
+  assert.deepEqual(seen, [[4, 0], [0, 10]]);
+});
+
+test("HITS press stream start replays G HUB's captured arm sequence, stop clears the enable byte", async () => {
+  const { client } = analogButtonsMouse();
+  await resolveIndex(client);
+  const internals = client as unknown as {
+    device: { probed: Array<{ data: Uint8Array }> };
+  };
+  await client.startAnalogPressStream();
+  await client.stopAnalogPressStream();
+  const short = internals.device.probed.filter((p) => p.data.length === 6 && p.data[1] === 0x16 && p.data[2] >> 4 === 3);
+  assert.deepEqual(Array.from(short[0].data.slice(3, 6)), [0x01, 0x3c, 0x00]);
+  assert.deepEqual(Array.from(short[1].data.slice(3, 6)), [0x00, 0x00, 0x00]);
 });

@@ -431,6 +431,8 @@ export class LogitechHidppClient {
   private dpiFeatureResolved: ResolvedFeature | null = null;
   private rateFeatureResolved: ResolvedFeature | null = null;
   private reportRateFeatureIndex: number | null = null;
+  private analogButtonsFeatureIndex: number | null = null;
+  private readonly analogPressListeners = new Set<(left: number, right: number) => void>();
   private supportedPollingRatesCache: number[] | null = null;
   private livePollingRateHz: number | null = null;
   /** Discovered by resolveDeviceIndex; null until the mouse has answered. */
@@ -469,6 +471,10 @@ export class LogitechHidppClient {
         this.rateChangeWaiters.splice(0, this.rateChangeWaiters.length, ...this.rateChangeWaiters.filter((waiter) => waiter.rate !== rate));
         matchingRateWaiters.forEach((waiter) => waiter.resolve());
       }
+    }
+    // HITS pushes the live press depth of each button (0..10) as event 0 while one is held.
+    if (report[0] === this.deviceIndex && report[1] === this.analogButtonsFeatureIndex && report[2] === 0x00) {
+      this.analogPressListeners.forEach((listener) => listener(report[3] ?? 0, report[4] ?? 0));
     }
     const matchingIndex = this.waiters.findIndex(
       (waiter) => report[0] === this.deviceIndex
@@ -1258,6 +1264,40 @@ export class LogitechHidppClient {
       || (tuning.rapidTriggerEnabled !== undefined && result.rapidTriggerEnabled !== tuning.rapidTriggerEnabled)) {
       throw new Error("The mouse did not confirm the hall-effect button settings.");
     }
+  }
+
+  /**
+   * Live press depth of the left and right button, 0 (released) to 10 (fully
+   * down). The mouse only streams it while G HUB's HITS page is open.
+   * Returns the unsubscribe.
+   */
+  onAnalogPress(listener: (left: number, right: number) => void): () => void {
+    this.analogPressListeners.add(listener);
+    return () => this.analogPressListeners.delete(listener);
+  }
+
+  /**
+   * Arms the live press-depth stream: the mouse only sends onAnalogPress
+   * events while this is on, otherwise it stays silent even for hardware
+   * presses. Captured from G HUB's HITS test page, which sends [0x01, 0x3c,
+   * 0x00] on function 3 when the page opens. The 0x3c meaning is unconfirmed
+   * (maybe a timeout in seconds); it is replayed as G HUB sent it.
+   */
+  async startAnalogPressStream(): Promise<void> {
+    const feature = await this.getFeature(FEATURE.analogButtons);
+    if (!feature.index) throw new Error("This Logitech mouse does not expose hall-effect button tuning.");
+    await this.request(feature.index, 0x30, 0x01, 0x3c, 0x00);
+  }
+
+  /**
+   * Disarms the stream. G HUB's page close was not captured, so this sends
+   * the same function with the enable byte cleared, the natural inverse of
+   * startAnalogPressStream.
+   */
+  async stopAnalogPressStream(): Promise<void> {
+    const feature = await this.getFeature(FEATURE.analogButtons);
+    if (!feature.index) return;
+    await this.request(feature.index, 0x30, 0x00, 0x00, 0x00).catch(() => undefined);
   }
 
   private assertAnalogTuningInRange(
@@ -2958,6 +2998,7 @@ export class LogitechHidppClient {
     const reply = await this.request(0x00, 0x00, featureId >> 8, featureId & 0xff);
     const feature = { index: reply[3] ?? 0, version: reply[6] ?? 0 };
     if (featureId === FEATURE.extendedReportRate) this.reportRateFeatureIndex = feature.index;
+    if (featureId === FEATURE.analogButtons && feature.index) this.analogButtonsFeatureIndex = feature.index;
     return feature;
   }
 
