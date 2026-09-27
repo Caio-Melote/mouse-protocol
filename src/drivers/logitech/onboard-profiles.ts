@@ -628,6 +628,82 @@ const COMPONENTS_V6: ComponentSpec[] = [
 const BUNNY_HOPPING: ComponentSpec = { offset: 0x25, size: 1, name: "bunny_hopping" };
 const ANALOG_BUTTON: ComponentSpec = { offset: 0x26, size: 6, name: "analog_button" };
 
+/** One primary button's HITS settings as the profile stores them. */
+export interface AnalogButtonProfileValues {
+  actuation: number;
+  rapidTrigger: number;
+  haptics: number;
+  rapidTriggerEnabled: boolean;
+}
+
+const ANALOG_BUTTON_COUNT = 2;
+const ANALOG_BUTTON_BYTES = 3;
+
+/**
+ * HITS settings held in a format 8+ profile's `analog_button` block (offset
+ * 0x26, one three-byte entry per primary button). The bytes are the live 0x1B0C
+ * values verbatim: [actuation << 2, rapid trigger << 2 | on, haptics << 2].
+ *
+ * This copy is what the mouse loads at power-on. Writing only the live feature
+ * changes the working values, which a power cycle discards - a PRO X 3
+ * Superstrike booted back to the stored 5 / 2 (off) / 3 after every live-only
+ * change, and its stored block never changed in three captures.
+ */
+export function decodeAnalogButtons(
+  sector: Uint8Array,
+  profileFormatId: number,
+): AnalogButtonProfileValues[] | null {
+  if (profileFormatId < 8) return null;
+  return Array.from({ length: ANALOG_BUTTON_COUNT }, (_, button) => {
+    const base = ANALOG_BUTTON.offset + button * ANALOG_BUTTON_BYTES;
+    return {
+      actuation: (sector[base] ?? 0) >> 2,
+      rapidTrigger: (sector[base + 1] ?? 0) >> 2,
+      haptics: (sector[base + 2] ?? 0) >> 2,
+      rapidTriggerEnabled: ((sector[base + 1] ?? 0) & 0x01) === 1,
+    };
+  });
+}
+
+/**
+ * Writes HITS settings for the named primary buttons into a copy of the
+ * profile, leaving every other byte alone. A button whose `rapidTriggerEnabled`
+ * is left out keeps its stored on/off bit.
+ */
+export function encodeAnalogButtons(
+  sector: Uint8Array,
+  profileFormatId: number,
+  buttons: ReadonlyArray<{
+    button: number;
+    actuation: number;
+    rapidTrigger: number;
+    haptics: number;
+    rapidTriggerEnabled?: boolean;
+  }>,
+): Uint8Array {
+  if (profileFormatId < 8) throw new Error("This profile format has no analog button settings.");
+  const result = sector.slice();
+  for (const entry of buttons) {
+    if (!Number.isInteger(entry.button) || entry.button < 0 || entry.button >= ANALOG_BUTTON_COUNT) {
+      throw new Error("Analog button settings exist for the left and right primary buttons only.");
+    }
+    for (const value of [entry.actuation, entry.rapidTrigger, entry.haptics]) {
+      // Each value is stored in bits 7..2, so it has six bits.
+      if (!Number.isInteger(value) || value < 0 || value > 0x3f) {
+        throw new Error("An analog button setting is outside what the profile can store.");
+      }
+    }
+    const base = ANALOG_BUTTON.offset + entry.button * ANALOG_BUTTON_BYTES;
+    const enabledBit = entry.rapidTriggerEnabled === undefined
+      ? (result[base + 1] ?? 0) & 0x01
+      : entry.rapidTriggerEnabled ? 1 : 0;
+    result[base] = entry.actuation << 2;
+    result[base + 1] = (entry.rapidTrigger << 2) | enabledBit;
+    result[base + 2] = entry.haptics << 2;
+  }
+  return applyCrc(result);
+}
+
 export function componentsForFormat(profileFormatId: number): ComponentSpec[] {
   const components = profileFormatId >= 6 ? [...COMPONENTS_V6] : [...COMPONENTS_V1];
   if (profileFormatId >= 7) components.push(BUNNY_HOPPING);

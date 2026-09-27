@@ -517,3 +517,23 @@ test("connection wording follows the product id, not the 0xFF43 usage page alone
   assert.equal(connectionDetailFor({ ...base, boltReceiver: true }), "Logi Bolt");
   assert.equal(connectionDetailFor(base), undefined);
 });
+
+test("persisting HITS validates against the mouse's limits, then hands both buttons to one profile write", async () => {
+  const { client } = analogButtonsMouse();
+  await resolveIndex(client);
+  const writes: unknown[] = [];
+  (client as unknown as { writeActiveProfile(values: unknown): Promise<void> }).writeActiveProfile = async (values) => {
+    writes.push(values);
+  };
+
+  // Outside the limits (actuation 1-10): refused before any profile write.
+  await assert.rejects(
+    () => client.persistAnalogButtonTuning([{ button: 0, actuation: 11, rapidTrigger: 2, haptics: 3 }]),
+    /outside the mouse's supported range/,
+  );
+  assert.equal(writes.length, 0);
+
+  const both = { actuation: 8, rapidTrigger: 2, haptics: 2, rapidTriggerEnabled: false };
+  await client.persistAnalogButtonTuning([{ button: 0, ...both }, { button: 1, ...both }]);
+  assert.deepEqual(writes, [{ analogButtons: [{ button: 0, ...both }, { button: 1, ...both }] }]);
+});
