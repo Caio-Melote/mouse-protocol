@@ -707,3 +707,15 @@ but nothing should ever write them in a loop or on a restore path.
 Offsets are format-specific; never apply one format's layout to another. Only
 ship writes for devices tested on real hardware. Decoding and dumping other
 formats is safe; writing on inference is not.
+
+### HITS settings are stored in the profile (format 8)
+
+The HITS tuning feature (0x1B0C) only changes the mouse's working values. What it
+loads at power-on is the profile's `analog_button` block at offset 0x26: one
+three-byte entry per primary button, holding the same bytes the live feature
+uses (`actuation << 2`, `rapid trigger << 2 | on`, `haptics << 2`). Three PRO X 3
+Superstrike captures show it: the stored block read `14 08 0c 14 08 0c` every
+time (actuation 5, sensitivity 2 off, haptics 3) while the live values differed
+and while a live-only apply came back to it after a power cycle. A HITS change
+is therefore written both ways: the live feature for immediate effect, and
+`persistAnalogButtonTuning` for the profile, in one sector write.

@@ -100,6 +100,7 @@ import {
   isProfileWritable,
   isLodWritableForProduct,
   encodeDpiStages,
+  encodeAnalogButtons,
   encodeButtonAssignment,
   encodeMacroButtonAssignment,
   encodeMacroSector,
@@ -1236,11 +1237,7 @@ export class LogitechHidppClient {
     if (!capabilities) {
       throw new Error("This mouse does not expose tuning for that button.");
     }
-    if (!Number.isInteger(tuning.actuation) || tuning.actuation < 1 || tuning.actuation > current.maxActuation
-      || !Number.isInteger(tuning.rapidTrigger) || tuning.rapidTrigger < 1 || tuning.rapidTrigger > current.maxRapidTrigger
-      || !Number.isInteger(tuning.haptics) || tuning.haptics < 0 || tuning.haptics > current.maxHaptics) {
-      throw new Error("One or more hall-effect button values are outside the mouse's supported range.");
-    }
+    this.assertAnalogTuningInRange(current, tuning);
     // HID++ 0x1B0C stores logical values in bits 7..2. In the rapid-trigger byte,
     // bit 0 is the on/off switch: G HUB's toggle flips it (0x08 off, 0x09 on at
     // sensitivity 2, captured from a PRO X 3 Superstrike). A write that does not
@@ -1261,6 +1258,44 @@ export class LogitechHidppClient {
       || (tuning.rapidTriggerEnabled !== undefined && result.rapidTriggerEnabled !== tuning.rapidTriggerEnabled)) {
       throw new Error("The mouse did not confirm the hall-effect button settings.");
     }
+  }
+
+  private assertAnalogTuningInRange(
+    limits: { maxActuation: number; maxRapidTrigger: number; maxHaptics: number },
+    tuning: { actuation: number; rapidTrigger: number; haptics: number },
+  ): void {
+    if (!Number.isInteger(tuning.actuation) || tuning.actuation < 1 || tuning.actuation > limits.maxActuation
+      || !Number.isInteger(tuning.rapidTrigger) || tuning.rapidTrigger < 1 || tuning.rapidTrigger > limits.maxRapidTrigger
+      || !Number.isInteger(tuning.haptics) || tuning.haptics < 0 || tuning.haptics > limits.maxHaptics) {
+      throw new Error("One or more hall-effect button values are outside the mouse's supported range.");
+    }
+  }
+
+  /**
+   * Saves HITS settings into the running profile, where the mouse reloads them
+   * at power-on. setAnalogButtonTuning alone only changes the working values,
+   * which a power cycle discards. Call it after the live write, with the same
+   * values, so both copies agree; both buttons go into one sector write.
+   */
+  async persistAnalogButtonTuning(
+    buttons: ReadonlyArray<{
+      button: 0 | 1;
+      actuation: number;
+      rapidTrigger: number;
+      haptics: number;
+      rapidTriggerEnabled?: boolean;
+    }>,
+  ): Promise<void> {
+    const feature = await this.getFeature(FEATURE.analogButtons);
+    if (!feature.index) {
+      throw new Error("This Logitech mouse does not expose hall-effect button tuning.");
+    }
+    const current = await this.readAnalogButtonTuning(feature.index);
+    for (const entry of buttons) {
+      if (!current.buttons[entry.button]) throw new Error("This mouse does not expose tuning for that button.");
+      this.assertAnalogTuningInRange(current, entry);
+    }
+    await this.writeActiveProfile({ analogButtons: buttons });
   }
 
   /**
@@ -1473,6 +1508,13 @@ export class LogitechHidppClient {
     name?: string | null;
     buttonAssignments?: Array<{ layer: "primary" | "g-shift"; button: number; binding: LogitechButtonAction | LogitechButtonBinding }>;
     buttonMacros?: Array<{ layer: "primary" | "g-shift"; button: number; steps: LogitechMacroStep[] }>;
+    analogButtons?: ReadonlyArray<{
+      button: 0 | 1;
+      actuation: number;
+      rapidTrigger: number;
+      haptics: number;
+      rapidTriggerEnabled?: boolean;
+    }>;
     /** Defaults to the running profile when omitted. */
     sector?: number;
   }): Promise<void> {
@@ -1601,6 +1643,9 @@ export class LogitechHidppClient {
     }
     for (const assignment of values.buttonAssignments ?? []) {
       updated = encodeButtonAssignment(updated, formatId, assignment.layer, assignment.button, assignment.binding);
+    }
+    if (values.analogButtons?.length) {
+      updated = encodeAnalogButtons(updated, formatId, values.analogButtons);
     }
 
     applyCrc(updated);
