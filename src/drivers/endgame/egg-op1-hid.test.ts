@@ -27,8 +27,11 @@ const hex = (bytes: ArrayLike<number>): string =>
  * 0x07 and applies block writes using the layout in johanneszab/endgame-op1w
  * re/PROTOCOL.md section 4, written out independently of eggBlockWrites.
  */
-function fake4kV2({ productId = 0x1984, pairedPid = productId as number | null } = {}) {
+function fake4kV2({ productId = 0x1984, pairedPid = productId as number | null, relayLagReads = 0 } = {}) {
   const state = { pairedPid };
+  // Through the dongle the mouse-info reply lags: until it lands, reads return the previous response.
+  let relayed: Uint8Array | null = null;
+  let lag = 0;
   const blob = new Uint8Array(1024);
   blob.set(REPORTED_BLOB);
   const writes: string[] = [];
@@ -71,7 +74,10 @@ function fake4kV2({ productId = 0x1984, pairedPid = productId as number | null }
       if (command === 0x0e) {
         // Mouse asleep behind the dongle: status 0x08, no identity.
         if (state.pairedPid === null) return answer(0x08);
-        return answer(0x01, [...new Array(14).fill(0), 0x67, 0x33, state.pairedPid & 0xff, state.pairedPid >> 8]);
+        const held = reply;
+        answer(0x01, [...new Array(14).fill(0), 0x67, 0x33, state.pairedPid & 0xff, state.pairedPid >> 8]);
+        [relayed, reply, lag] = [reply, held, relayLagReads];
+        return;
       }
       writes.push(`${hex(bytes.subarray(0, 6))} | ${hex(payload.subarray(0, command === 0x15 ? 11 : 28))}`);
       if (command === 0x14) {
@@ -86,7 +92,10 @@ function fake4kV2({ productId = 0x1984, pairedPid = productId as number | null }
       answer(0x01);
     },
     async receiveFeatureReport(reportId: number) {
-      if (reportId === 0xa1) return new DataView(reply.slice().buffer);
+      if (reportId === 0xa1) {
+        if (relayed && lag-- <= 0) [reply, relayed] = [relayed, null];
+        return new DataView(reply.slice().buffer);
+      }
       const config = new Uint8Array(1040);
       config[0] = 0x01;
       config.set(blob, 15);
@@ -183,4 +192,10 @@ test("over the shared 0x1970 dongle, the mouse-info reply names the paired 4K v2
   assert.equal((await client.readStatus()).name, "Endgame Gear OP1w/XM2w 4K v2");
   sleepy.state.pairedPid = 0x1984;
   assert.equal((await client.readStatus()).name, "Endgame Gear OP1w 4K v2");
+});
+
+test("a mouse-info reply that lags behind the dongle's held response still names the paired 4K v2", async () => {
+  // Hardware test over 0x1970: settings wrote fine, yet the name never resolved.
+  const lagging = fake4kV2({ productId: 0x1970, pairedPid: 0x1982, relayLagReads: 2 });
+  assert.equal((await new EggOp1HidClient(lagging.device).readStatus()).name, "Endgame Gear XM2w 4K v2");
 });
