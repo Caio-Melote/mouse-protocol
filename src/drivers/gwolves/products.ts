@@ -63,7 +63,8 @@ export const GWOLVES_PRODUCTS: ReadonlyMap<number, GWolvesProduct> = new Map([
   [0x5808, { model: "HSK Pro", wireless: false, verified: false, protocol: "xvi" }],
   [0x5817, { model: "HSK Pro", wireless: true, verified: false, protocol: "xvi" }],
   [0x2708, { model: "HTX Mini", wireless: false, verified: false, protocol: "xvi" }],
-  [0x2717, { model: "HTX Mini", wireless: true, verified: false, protocol: "xvi" }],
+  // DPI, polling and lift-off confirmed on this receiver (ticket #0105).
+  [0x2717, { model: "HTX Mini", wireless: true, verified: true, protocol: "xvi" }],
   [0x5408, { model: "HTS Plus", wireless: false, verified: false, protocol: "xvi" }],
   [0x5417, { model: "HTS Plus", wireless: true, verified: false, protocol: "xvi" }],
   [0x5708, { model: "HTX", wireless: false, verified: false, protocol: "xvi" }],

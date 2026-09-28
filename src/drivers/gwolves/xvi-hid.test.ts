@@ -11,7 +11,12 @@ if (typeof (globalThis as { window?: unknown }).window === "undefined") {
 // Answers like the XVI firmware as the web driver reads it: the reply is the
 // request with status 0xa1 in slot 0 and the values written in place.
 function xviDevice(productId: number, { prefixReplies = false, pollingCode = 128 } = {}) {
-  const state = { pollingCode, lod: 1, active: 2, stages: [[400, 400], [800, 800], [1600, 1600]] };
+  const state = {
+    pollingCode, lod: 1, active: 2, stages: [[400, 400], [800, 800], [1600, 1600]],
+    sleep: 60, debounce: [2, 5, 35, 10], motionSync: 0, angleSnap: 1,
+    // Left, Right, Middle, Back, Forward, DPI; Forward holds a macro.
+    buttons: [1, 1, 0, 0, 0, 0, 2, 1, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 4, 1, 0, 0, 0, 0, 24, 3, 0, 1, 1, 0, 11, 1, 0, 0, 0, 0],
+  };
   const sent: Uint8Array[] = [];
   let reply = new Uint8Array(64);
   const answer = (request: Uint8Array): Uint8Array => {
@@ -25,6 +30,8 @@ function xviDevice(productId: number, { prefixReplies = false, pollingCode = 128
         state.stages.forEach(([x, y], stage) => out.set([x! >> 8, x! & 0xff, y! >> 8, y! & 0xff], 8 + stage * 4));
       }
       if (command === 0x82) out[7] = state.active;
+      if (command === 0x87) out.set([state.sleep >> 8, state.sleep & 0xff], 6);
+      if (command === 0x07) state.sleep = (request[6]! << 8) | request[7]!;
       if (command === 0x01) {
         state.stages = Array.from({ length: request[7]! }, (_, stage) => {
           const at = 8 + stage * 4;
@@ -38,6 +45,14 @@ function xviDevice(productId: number, { prefixReplies = false, pollingCode = 128
       if (command === 0x02) state.pollingCode = request[4]!;
       if (command === 0x86) out[4] = state.lod;
       if (command === 0x06) state.lod = request[4]!;
+      if (command === 0x85) out.set(state.debounce, 4);
+      if (command === 0x05) state.debounce = [...request.slice(4, 8)];
+      if (command === 0x91) out[4] = state.motionSync;
+      if (command === 0x11) state.motionSync = request[4]!;
+      if (command === 0x87) out[4] = state.angleSnap;
+      if (command === 0x07) state.angleSnap = request[4]!;
+      if (command === 0x84) out.set(state.buttons, 4);
+      if (command === 0x04) state.buttons = [...request.slice(4, 40)];
     }
     return out;
   };
@@ -107,4 +122,41 @@ test("over the cable the web driver's 64 reads as 1 kHz and faster rates are ref
   const client = new GWolvesXviHidClient(device);
   assert.equal((await client.readStatus()).pollingRateHz, 1000);
   await assert.rejects(client.setPollingRate(8000), /does not support 8000 Hz/);
+});
+
+test("reads and writes sleep, debounce, the sensor toggles and the buttons", async () => {
+  const { device, state } = xviDevice(0x2717);
+  const client = new GWolvesXviHidClient(device);
+
+  const status = await client.readStatus();
+  assert.equal(status.sleepTimeout, 60);
+  assert.equal(status.debounceMs, 2);
+  assert.equal(status.motionSync, false);
+  assert.equal(status.angleSnapping, true);
+  assert.equal(status.ui?.hideRippleControl, true);
+  assert.deepEqual(status.buttonMappings, {
+    Left: "Left Click", Right: "Right Click", Middle: "Middle Click", Back: "Backward", Forward: "Custom",
+  });
+
+  assert.equal(await client.setSleepTimeout(300), 300);
+  assert.equal(state.sleep, 300);
+  await assert.rejects(client.setSleepTimeout(10), /30-600 seconds/);
+  assert.equal(await client.setDebounceTime(4), 4);
+  // Only the before-press timing moves.
+  assert.deepEqual(state.debounce, [4, 5, 35, 10]);
+  assert.equal(await client.setMotionSync(true), true);
+  assert.equal(await client.setAngleSnapping(false), false);
+  assert.deepEqual([state.motionSync, state.angleSnap], [1, 0]);
+
+  await client.setButtonMapping("Forward", "DPI+");
+  // The macro's data bytes stay, as they do in the web driver; the unset type
+  // byte on Middle is stored back as 1.
+  assert.deepEqual(state.buttons.slice(12, 14), [3, 1]);
+  assert.deepEqual(state.buttons.slice(24, 30), [9, 1, 0, 1, 1, 0]);
+  assert.equal((await client.readStatus()).buttonMappings?.Forward, "DPI+");
+  await assert.rejects(client.setButtonMapping("Left", "Right Click"), /Keep at least one button as Left Click/);
+  await assert.rejects(client.setButtonMapping("DPI", "DPI Loop"), /no "DPI" button/);
+
+  state.sleep = 0xffff;
+  assert.equal((await client.readStatus()).sleepTimeout, null);
 });
