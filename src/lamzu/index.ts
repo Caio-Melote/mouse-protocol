@@ -17,7 +17,10 @@ const RATES_1K = [125, 250, 500, 1000] as const;
 const RATES_8K = [500, 1000, 2000, 4000, 8000] as const;
 const RATES_8K_FULL = [125, 250, 500, 1000, 2000, 4000, 8000] as const;
 export const CRDRAKO_PRODUCT_IDS = [0x006a, 0x006b] as const;
-export const ATTACKSHARK_PRODUCT_IDS = [0x0046, 0x0047] as const;
+// Attack Shark Core 2.0.7.9 (Config/xvi_models.xlsx) lists all three on the
+// same CompX platform: wired 125-1000, 8K receiver 125-8000, DPIMax 42000.
+// Only the R5 Ultra has been seen on hardware.
+export const ATTACKSHARK_PRODUCT_IDS = [0x0046, 0x0047, 0x0021, 0x0022, 0x003a, 0x003b] as const;
 export const LAMZU_PRODUCTS: ReadonlyMap<number, LamzuProduct> = new Map([
   [0x001c, { model: "Maya X", wireless: false, pollingRates: RATES_1K }],
   [0x001d, { model: "Maya X", wireless: true, pollingRates: RATES_1K }],
@@ -36,10 +39,26 @@ export const LAMZU_PRODUCTS: ReadonlyMap<number, LamzuProduct> = new Map([
   }],
   [0x0047, {
     brand: "Attack Shark", model: "R5 Ultra", wireless: true,
-    pollingRates: RATES_8K, maxDpi: 42000, uiFamily: "attack-shark",
+    pollingRates: RATES_8K_FULL, maxDpi: 42000, uiFamily: "attack-shark",
     // Attack Shark Core 2.0.7.9 (DriverCore.exe, DongleLEDOnOff): the toggle
     // only shows on the receiver, and later Core releases dropped it.
     dongleLed: true,
+  }],
+  [0x0021, {
+    brand: "Attack Shark", model: "R6", wireless: false,
+    pollingRates: RATES_1K, maxDpi: 42000, uiFamily: "attack-shark",
+  }],
+  [0x0022, {
+    brand: "Attack Shark", model: "R6", wireless: true,
+    pollingRates: RATES_8K_FULL, maxDpi: 42000, uiFamily: "attack-shark",
+  }],
+  [0x003a, {
+    brand: "Attack Shark", model: "R8", wireless: false,
+    pollingRates: RATES_1K, maxDpi: 42000, uiFamily: "attack-shark",
+  }],
+  [0x003b, {
+    brand: "Attack Shark", model: "R8", wireless: true,
+    pollingRates: RATES_8K_FULL, maxDpi: 42000, uiFamily: "attack-shark",
   }],
 ]);
 /**

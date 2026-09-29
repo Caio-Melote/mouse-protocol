@@ -21,7 +21,7 @@ import {
 //   0x1d57 — R1, X11, X3, X6 and more on shared PIDs: HID feature reports,
 //            250 ms cmd delay; the model id rides in receiver messages
 //   0x25a7 — X3, X6, X8, X11 direct: GearHub-derived protocol (report 0, 64 B)
-//   0x373e — R5 Ultra, R3 (Lamzu OEM) — usagePage 0xffff feature reports
+//   0x373e — R5 Ultra, R6, R8, R3 (Lamzu OEM) — usagePage 0xffff feature reports
 //
 // PIDs change between firmware revisions, so detection is collection-based,
 // not PID-based. For 0x373e we exclude known Lamzu PIDs.
@@ -53,7 +53,7 @@ import {
 
 const VID_1D57 = 0x1d57; // R1 / X11 family
 const VID_25A7 = VENDOR_ID.attackShark; // X3, X6, X8, X11 direct
-const VID_373E = 0x373e; // Lamzu OEM (R5 Ultra, R3)
+const VID_373E = 0x373e; // Lamzu OEM (R5 Ultra, R6, R8, R3)
 
 // ── 0x1d57 protocol (R1 / X11) ───────────────────────────────────────────
 // Confirmed from open-source driver research.

@@ -682,15 +682,17 @@ export class EggOp1HidClient {
     return this.run(async () => {
       await this.open();
       await this.sendCommand(EGG_OPERATION.mouseInfo);
-      await this.delay(50);
+      // The vendor tool's settle and busy back-off (PROTOCOL.md section 2).
+      await this.delay(150);
       for (let attempt = 0; attempt < 3; attempt += 1) {
         const reply = (await this.receiveFeature(EGG_REPORT.command, EGG_COMMAND_SIZE, this.commandPayloadLength)).bytes;
         if (reply[1] === STATUS_OK && eggReadUint16LE(reply, 16) === EGG_VENDOR_ID) {
           const paired = EGG_DEVICE_PROFILES.get(eggReadUint16LE(reply, 18));
           return paired?.wireless4k ? paired.name : this.profile.name;
         }
-        if (reply[1] !== STATUS_BUSY) return undefined;
-        await this.delay(100);
+        // An OK without our VID is the previous command's held reply: the dongle has not relayed the mouse yet.
+        if (reply[1] !== STATUS_BUSY && reply[1] !== STATUS_OK) return undefined;
+        await this.delay(200 * (attempt + 1));
       }
       return undefined;
     });
