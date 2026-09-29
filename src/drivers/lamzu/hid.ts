@@ -40,6 +40,7 @@ const TARGET = {
 const PAGE = {
   device: 0x00,
   profile: 0x01,
+  dongle: 0x02,
 } as const;
 
 type LiftOffDistance = NonNullable<MouseStatus["liftOffDistance"]>;
@@ -91,6 +92,9 @@ const PROFILE_READ = {
     ({ target: TARGET.mouse, page: PAGE.profile, command: 0x8b, length: 0x02, args: [profile] }),
   rippleControl: (profile: number): LamzuRequest =>
     ({ target: TARGET.mouse, page: PAGE.profile, command: 0x8a, length: 0x02, args: [profile] }),
+  // Addressed to the receiver itself, not the mouse behind it.
+  dongleLed: (profile: number): LamzuRequest =>
+    ({ target: TARGET.dongle, page: PAGE.dongle, command: 0x84, length: 0x02, args: [profile] }),
 } as const;
 
 const WRITE = {
@@ -104,6 +108,7 @@ const WRITE = {
   competitiveMode: 0x13,
   hyperMode: 0x0b,
   rippleControl: 0x0a,
+  dongleLed: 0x04,
 } as const;
 
 export type LamzuDpiStage = CompaxDpiStage;
@@ -254,6 +259,9 @@ export class LamzuHidClient {
     const competitiveMode = await this.request(PROFILE_READ.competitiveMode(profile)).catch(() => null);
     const hyperMode = await this.request(PROFILE_READ.hyperMode(profile)).catch(() => null);
     const rippleControl = await this.request(PROFILE_READ.rippleControl(profile)).catch(() => null);
+    const dongleLed = this.profile()?.dongleLed
+      ? await this.request(PROFILE_READ.dongleLed(profile)).catch(() => null)
+      : null;
     const stage = stages[activeStage];
     if (!stage) throw new Error("The mouse did not report any DPI stages.");
     return this.lastStatus = {
@@ -277,6 +285,7 @@ export class LamzuHidClient {
       performanceMode: competitiveMode ? competitiveMode[1] === 1 : null,
       hyperMode: hyperMode ? hyperMode[1] === 1 : null,
       rippleControl: rippleControl ? rippleControl[1] === 1 : null,
+      dongleLedEnabled: dongleLed ? dongleLed[1] === 1 : null,
       connectionType: wireless ? "Wireless" : "Wired",
       connectionDetail: wireless ? "2.4 GHz receiver" : "Wired USB",
       debounceMs: debounce ? debounce[1] : null,
@@ -345,6 +354,18 @@ export class LamzuHidClient {
 
   async setRippleControl(enabled: boolean): Promise<boolean> {
     return await this.setFlag(WRITE.rippleControl, PROFILE_READ.rippleControl, enabled, "rippleControl", "ripple control");
+  }
+
+  async setDongleLed(enabled: boolean): Promise<boolean> {
+    if (!this.profile()?.dongleLed) throw new Error("This receiver has no LED control.");
+    const profile = await this.currentProfile();
+    await this.request({
+      target: TARGET.dongle, page: PAGE.dongle, command: WRITE.dongleLed, length: 0x02, args: [profile, enabled ? 1 : 0],
+    });
+    const confirmed = (await this.request(PROFILE_READ.dongleLed(profile)))[1] === 1;
+    if (confirmed !== enabled) throw new Error(`The receiver left its LED ${confirmed ? "on" : "off"}.`);
+    this.patch({ dongleLedEnabled: confirmed });
+    return confirmed;
   }
 
   private async setFlag(

@@ -9,6 +9,8 @@ export interface LamzuProduct {
   mouseTarget?: number;
   maxDpi?: number;
   sleepOptions?: readonly number[];
+  /** The receiver answers the dongle LED on/off command (page 0x02, 0x04/0x84). */
+  dongleLed?: boolean;
 }
 export const LAMZU_VENDOR_ID = 0x373e;
 const RATES_1K = [125, 250, 500, 1000] as const;
@@ -38,6 +40,9 @@ export const LAMZU_PRODUCTS: ReadonlyMap<number, LamzuProduct> = new Map([
   [0x0047, {
     brand: "Attack Shark", model: "R5 Ultra", wireless: true,
     pollingRates: RATES_8K_FULL, maxDpi: 42000, uiFamily: "attack-shark",
+    // Attack Shark Core 2.0.7.9 (DriverCore.exe, DongleLEDOnOff): the toggle
+    // only shows on the receiver, and later Core releases dropped it.
+    dongleLed: true,
   }],
   [0x0021, {
     brand: "Attack Shark", model: "R6", wireless: false,

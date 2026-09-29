@@ -97,6 +97,7 @@ function fakeR5Ultra(productId: number, busyBatteryReplies = 0, activeProfile = 
   let batterySends = 0;
   let liftOff = 0x01;
   let debounce = 0x00;
+  let dongleLed = 0x00;
   const device = {
     vendorId: LAMZU_VENDOR_ID,
     productId,
@@ -121,6 +122,7 @@ function fakeR5Ultra(productId: number, busyBatteryReplies = 0, activeProfile = 
       const reply = new Uint8Array(64);
       if (page === 0x01 && command === 0x08) liftOff = request[7]!;
       if (page === 0x00 && command === 0x08) debounce = request[7]!;
+      if (page === 0x02 && command === 0x04) dongleLed = request[7]!;
       if (page === 0x00 && command === 0x83) {
         batterySends += 1;
         if (batterySends <= busyBatteryReplies) {
@@ -144,7 +146,9 @@ function fakeR5Ultra(productId: number, busyBatteryReplies = 0, activeProfile = 
                   ? [0x00, 0x64]
                   : page === 0x00 && command === 0x81
                     ? [0x00, 0x00, 0x01, 0x02]
-                    : [0x01, 0x01];
+                    : page === 0x02 && command === 0x84
+                      ? [0x01, dongleLed]
+                      : [0x01, 0x01];
       reply[0] = 0xa1;
       reply[3] = payload.length;
       reply[4] = page;
@@ -212,6 +216,22 @@ test("the Attack Shark R5 Ultra addresses the reported active profile", async ()
   assert.ok(scoped.every((packet) => packet[6] === 0x02),
     `expected every profile-scoped command to address profile 2, saw:\n`
     + scoped.map((packet) => [...packet.slice(0, 8)].map((b) => b.toString(16).padStart(2, "0")).join(" ")).join("\n"));
+});
+
+test("the R5 Ultra receiver LED is read and switched on the dongle target", async () => {
+  const { device, sent } = fakeR5Ultra(0x0047);
+  const client = new LamzuHidClient(device);
+  assert.equal((await client.readStatus()).dongleLedEnabled, false);
+
+  assert.equal(await client.setDongleLed(true), true);
+  // Attack Shark Core 2.0.7.9 DongleLEDOnOff: 00 00 00 02 02 04 <profile> <on>.
+  const write = sent.find((packet) => packet[4] === 0x02 && packet[5] === 0x04)!;
+  assert.deepEqual([...write.slice(0, 8)], [0x00, 0x00, 0x00, 0x02, 0x02, 0x04, 0x01, 0x01]);
+  assert.equal((await client.readStatus()).dongleLedEnabled, true);
+
+  const wired = fakeR5Ultra(0x0046);
+  assert.equal((await new LamzuHidClient(wired.device).readStatus()).dongleLedEnabled, null);
+  assert.ok(!wired.sent.some((packet) => packet[4] === 0x02));
 });
 
 test("the catalog offers the wired and wireless R5 Ultra, R6 and R8", () => {
