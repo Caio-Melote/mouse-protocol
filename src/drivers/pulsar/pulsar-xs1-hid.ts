@@ -76,8 +76,11 @@ export class PulsarXs1HidClient {
 
   static isSupported(device: HIDDevice): boolean {
     if (device.vendorId !== PULSAR_VENDOR_ID || !PULSAR_XS1_PRODUCT_IDS.has(device.productId)) return false;
+    // Same collection as PULSAR_XS1_HID_FILTERS: the dongle's other interfaces
+    // can carry an unnumbered feature report too, and Chrome refuses writes there.
     const hasXs1Feature = device.collections.some((collection) =>
-      collection.featureReports.some((report) => report.reportId === REPORT_ID));
+      collection.usagePage === 0xffff && collection.usage === 0x01
+      && collection.featureReports.some((report) => report.reportId === REPORT_ID));
     const hasLegacyControl = device.collections.some((collection) =>
       collection.inputReports.some((report) => report.reportId === CONFIG_REPORT_ID)
       && collection.outputReports.some((report) => report.reportId === CONFIG_REPORT_ID));
