@@ -193,6 +193,10 @@
       "types": "./dist/ryunix/index.d.ts",
       "import": "./dist/ryunix/index.js"
     },
+    "./rapoo": {
+      "types": "./dist/rapoo/index.d.ts",
+      "import": "./dist/rapoo/index.js"
+    },
     "./delux": {
       "types": "./dist/delux/index.d.ts",
       "import": "./dist/delux/index.js"

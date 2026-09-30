@@ -1,34 +1,52 @@
-import type { MouseStatus } from "../mouse-types.ts";
+import type { MouseLighting, MouseStatus } from "../mouse-types.ts";
 import {
   KSNAKE_BUTTON_ACTIONS,
   KSNAKE_BUTTON_NAMES,
+  KSNAKE_BUTTON_WIRE_INDICES,
+  KSNAKE_MACRO_BYTES,
+  KSNAKE_MACRO_CHUNK_BYTES,
+  KSNAKE_MACRO_REPORT_ID,
+  KSNAKE_LIGHT_MODE_LABELS,
   KSNAKE_PRODUCT_ID,
   KSNAKE_POLLING_RATES,
+  KSNAKE_SLEEP_OPTIONS,
   KSNAKE_REPORT_ID,
   KSNAKE_USAGE,
   KSNAKE_USAGE_PAGE,
   KSNAKE_USB_VENDOR_ID,
+  NOIR_M2_NEX_BRAND,
+  NOIR_M2_NEX_MODEL,
   ksnakeDecodeBattery,
   ksnakeDecodeConfig,
+  ksnakeDecodeLightMode,
   ksnakeDecodeKeys,
+  ksnakeDecodeMacroChunk,
+  ksnakeDecodeMacroData,
   ksnakeDecodeLiftOff,
   ksnakeDecodePollingRate,
   ksnakeDecodeVersion,
   ksnakeEncodeLiftOff,
+  ksnakeEncodeLightMode,
   ksnakeEncodePollingRate,
+  ksnakeEncodeSetLightMode,
   ksnakeEncodeSetConfig,
   ksnakeEncodeSetKeys,
+  ksnakeEncodeMacroChunk,
+  ksnakeEncodeMacroCommit,
+  ksnakeEncodeMacroData,
   ksnakeGetBatteryRequest,
   ksnakeGetConfigRequest,
   ksnakeGetKeysRequest,
+  ksnakeGetMacroChunkRequest,
   ksnakeGetVersionRequest,
   ksnakeBindingLabel,
   ksnakeFindButtonAction,
-  ksnakeIsKnownKeyType,
   ksnakeIsValidDpi,
   ksnakeKeysLookPlausible,
+  isNoirM2NexDevice,
   type KsnakeConfig,
   type KsnakeKeyBinding,
+  type KsnakeMacroProfile,
 } from "../../ksnake/index.js";
 import { VENDOR_ID } from "../vendors.ts";
 
@@ -101,6 +119,10 @@ export class KsnakeHidClient {
     return options;
   }
 
+  getSleepOptions(): number[] {
+    return [...KSNAKE_SLEEP_OPTIONS];
+  }
+
   async open(): Promise<void> {
     if (!this.device.opened) await this.device.open();
   }
@@ -115,28 +137,55 @@ export class KsnakeHidClient {
     return started;
   }
 
-  private async exchange(body: Uint8Array): Promise<Uint8Array> {
+  private async exchange(body: Uint8Array, reportId = KSNAKE_REPORT_ID): Promise<Uint8Array> {
     const timeoutMs = this.replyTimeoutMs;
-    return this.run(async () => {
-      await this.open();
-      return new Promise<Uint8Array>((resolve, reject) => {
-        const timer = setTimeout(() => {
-          this.device.removeEventListener("inputreport", listener);
-          reject(new KsnakeTimeoutError());
-        }, timeoutMs);
-        const listener = (event: HIDInputReportEvent): void => {
-          clearTimeout(timer);
-          this.device.removeEventListener("inputreport", listener);
-          resolve(copyDataView(event.data));
-        };
-        this.device.addEventListener("inputreport", listener);
-        this.device.sendReport(KSNAKE_REPORT_ID, new Uint8Array(body.slice(0, 64)).buffer).catch((error: unknown) => {
-          clearTimeout(timer);
-          this.device.removeEventListener("inputreport", listener);
-          reject(error);
-        });
+    return this.run(() => this.exchangeNow(body, reportId, timeoutMs));
+  }
+
+  private async exchangeNow(body: Uint8Array, reportId: number, timeoutMs = this.replyTimeoutMs): Promise<Uint8Array> {
+    await this.open();
+    return new Promise<Uint8Array>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.device.removeEventListener("inputreport", listener);
+        reject(new KsnakeTimeoutError());
+      }, timeoutMs);
+      const listener = (event: HIDInputReportEvent): void => {
+        // Older test doubles omit reportId; a real WebHID event always has it.
+        // Filtering real events matters for macro reads because report 6 shares
+        // this collection with the normal report-0 command stream.
+        if (typeof event.reportId === "number" && event.reportId !== reportId) return;
+        clearTimeout(timer);
+        this.device.removeEventListener("inputreport", listener);
+        resolve(copyDataView(event.data));
+      };
+      this.device.addEventListener("inputreport", listener);
+      this.device.sendReport(reportId, new Uint8Array(body.slice(0, 64)).buffer).catch((error: unknown) => {
+        clearTimeout(timer);
+        this.device.removeEventListener("inputreport", listener);
+        reject(error);
       });
     });
+  }
+
+  /**
+   * Some K-snake descriptors expose the optional macro read channel as HID
+   * report 6, while the M2-NEX descriptor only advertises output report 0.
+   * Use the descriptor instead of asking WebHID to send an undeclared report.
+   * Test doubles without collections retain the original report-6 behavior.
+   */
+  private macroReadReportId(): number {
+    const collections = (this.device as unknown as {
+      collections?: Array<{ outputReports?: Array<{ reportId: number }> }>;
+    }).collections;
+    if (!collections) return KSNAKE_MACRO_REPORT_ID;
+    const outputReports = collections.flatMap((collection) => collection.outputReports ?? []);
+    // Minimal test doubles expose collections but omit the report descriptors.
+    // Keep the generic K-snake report-6 behavior for those; a real M2-NEX
+    // descriptor has outputReports: [{ reportId: 0 }] and therefore selects 0.
+    if (outputReports.length === 0) return KSNAKE_MACRO_REPORT_ID;
+    return outputReports.some((report) => report.reportId === KSNAKE_MACRO_REPORT_ID)
+      ? KSNAKE_MACRO_REPORT_ID
+      : KSNAKE_REPORT_ID;
   }
 
   /** Same as exchange, but resends on timeout (a sleeping dongle often drops the first). Non-timeout errors throw immediately. SETs are idempotent full-config writes, so resending is safe. */
@@ -206,15 +255,27 @@ export class KsnakeHidClient {
     const activeStage = config ? Math.min(Math.max(config.dpiIndex, 0), Math.max(stages.length - 1, 0)) : 0;
     const dpi = stages[activeStage] ?? 1600;
     const pollingRateHz = config ? (ksnakeDecodePollingRate(config.reportRate) ?? 1000) : 1000;
+    const isNoirM2Nex = isNoirM2NexDevice(this.device);
+    const brand: MouseStatus["brand"] = isNoirM2Nex ? NOIR_M2_NEX_BRAND : "K-snake";
+    const model = this.device.productName || (isNoirM2Nex ? NOIR_M2_NEX_MODEL : "K-snake X11");
+    const lightingMode = config ? ksnakeDecodeLightMode(config.lightMode) : null;
+    const liftOffDistance = config ? ksnakeDecodeLiftOff(config.lodValue) : null;
+    const supportedLiftOffDistances: NonNullable<MouseStatus["supportedLiftOffDistances"]> = liftOffDistance
+      ? ["Low", "High"]
+      : [];
     return {
-      brand: "K-snake",
-      name: this.device.productName || "K-snake X11",
+      brand,
+      name: model,
       ui: {
         family: "ksnake",
         settingsReady: config !== null,
+        // K-snake has no generic advanced cards, but its readable key map
+        // belongs in the shared Buttons tab. Keep the tab hidden when the
+        // dongle only returns the erased 0xff sentinel.
+        showAdvancedSection: keys !== null,
         hideUnsupportedPollingRates: true,
         hideProcessingCard: true,
-        defaultDisplayName: this.device.productName || "K-snake X11",
+        defaultDisplayName: model,
         dpiStageEditor: {
           maxStages: 6,
           countEditable: false,
@@ -233,21 +294,42 @@ export class KsnakeHidClient {
       activeProfile: null,
       connectionType: this.device.vendorId === KSNAKE_USB_VENDOR_ID ? "Wired" : "Wireless",
       connectionDetail: this.device.vendorId === KSNAKE_USB_VENDOR_ID ? "Wired USB" : "2.4 GHz receiver",
-      liftOffDistance: config ? ksnakeDecodeLiftOff(config.lodValue) : null,
-      supportedLiftOffDistances: ["Low", "High"],
+      liftOffDistance,
+      supportedLiftOffDistances,
+      sleepTimeout: config && config.sleepLight > 0 ? config.sleepLight * 60 : null,
+      scrollDirection: config ? (config.scrollFlag === 1 ? "Reverse" : "Forward") : null,
+      lighting: lightingMode ? {
+        zone: "Mouse",
+        modes: [...KSNAKE_LIGHT_MODE_LABELS],
+        mode: lightingMode,
+        color: null,
+        color2: null,
+        colorModes: [],
+        dualColorModes: [],
+        reactiveModes: [],
+        speeds: [],
+        speed: null,
+      } : undefined,
       // Generic remap interface: the shared ButtonMappingCard renders these
-      // with no brand-specific code. Opaque slots surface as "Custom (…)" and
-      // stay selectable-visible; setButtonMapping refuses to rewrite them.
+      // with no brand-specific code. The fixed DPI slot is deliberately not
+      // exposed as a user-remappable control; opaque bindings surface as
+      // "Custom (…)" and are preserved during a different slot's write.
       buttonMappings: keys
         ? Object.fromEntries(
-            keys.slice(0, KSNAKE_BUTTON_NAMES.length).map((binding, index) => [
-              KSNAKE_BUTTON_NAMES[index] as string,
-              ksnakeBindingLabel(binding) ?? `Custom (${binding.type},${binding.code1},${binding.code2},${binding.code3})`,
-            ]),
+            KSNAKE_BUTTON_NAMES.map((name, index) => {
+              const binding = keys[KSNAKE_BUTTON_WIRE_INDICES[index]];
+              return [
+                name,
+                binding
+                  ? ksnakeBindingLabel(binding)
+                    ?? `Custom (${binding.type},${binding.code1},${binding.code2},${binding.code3})`
+                  : "Unknown",
+              ] as const;
+            }),
           )
         : undefined,
       buttonOptions: KSNAKE_BUTTON_ACTIONS.map((action) => action.label),
-      firmware: version ? [`X11 ${version}`] : ["K-snake X11"],
+      firmware: version ? [(isNoirM2Nex ? NOIR_M2_NEX_MODEL : "X11") + " " + version] : [model],
     };
   }
 
@@ -306,7 +388,7 @@ export class KsnakeHidClient {
     return dpi;
   }
 
-  /** Read-only dump of the 7 button slots (GET_KEYS, reply[8..35]). */
+  /** Read-only dump of all 8 key slots (GET_KEYS, reply[8..39]). */
   async getKeys(): Promise<KsnakeKeyBinding[] | null> {
     // Consensus, not first-plausible: a crossed report from another command
     // can decode to plausible-but-wrong slots, and two strays never agree.
@@ -322,21 +404,75 @@ export class KsnakeHidClient {
   }
 
   /**
-   * Remap slots 0-5 (SET_KEYS). Only catalog types (mouse/special/media) are
-   * accepted — macro references and other opaque bindings are rejected rather
-   * than risk bricking them. Confirms by reading the map back.
+   * Experimental legacy read of the 4096-byte macro store. The live M2-NEX
+   * receiver exposes no reliable read response on its browser HID interface,
+   * so the OpenMouse editor intentionally does not call this method.
+   */
+  async getMacroData(): Promise<Uint8Array> {
+    return this.run(async () => {
+      const data = new Uint8Array(KSNAKE_MACRO_BYTES);
+      const reportId = this.macroReadReportId();
+      for (let offset = 0; offset < KSNAKE_MACRO_BYTES; offset += KSNAKE_MACRO_CHUNK_BYTES) {
+        const length = Math.min(KSNAKE_MACRO_CHUNK_BYTES, KSNAKE_MACRO_BYTES - offset);
+        const request = ksnakeGetMacroChunkRequest(offset, length);
+        const reply = await this.exchangeNow(request.body, reportId);
+        const chunk = ksnakeDecodeMacroChunk(reply, length);
+        if (!chunk) throw new Error(`The mouse returned an invalid macro chunk at offset ${offset}.`);
+        data.set(chunk, offset);
+      }
+      return data;
+    });
+  }
+
+  /** Experimental legacy decode of the vendor's 32 onboard macro slots. */
+  async getMacros(): Promise<KsnakeMacroProfile[]> {
+    const profiles = ksnakeDecodeMacroData(await this.getMacroData());
+    if (!profiles) throw new Error("The mouse returned an invalid macro store.");
+    return profiles;
+  }
+
+  /**
+   * Upload a raw vendor macro image and commit it. The shared OpenMouse UI does
+   * not call this yet, but keeping the transport here makes future macro
+   * editing possible without touching the already-verified key-map path.
+   * The vendor panel waits for an input response after every chunk and after
+   * the commit. Those replies confirm transport only; this firmware does not
+   * expose a byte-for-byte macro read-back on the live 2.4G receiver.
+   */
+  async setMacroData(data: Uint8Array): Promise<void> {
+    if (data.length > KSNAKE_MACRO_BYTES) {
+      throw new RangeError(`Macro data cannot exceed ${KSNAKE_MACRO_BYTES} bytes.`);
+    }
+    await this.run(async () => {
+      for (let offset = 0; offset < data.length; offset += KSNAKE_MACRO_CHUNK_BYTES) {
+        const chunk = data.slice(offset, Math.min(offset + KSNAKE_MACRO_CHUNK_BYTES, data.length));
+        await this.exchangeNow(ksnakeEncodeMacroChunk(offset, chunk), KSNAKE_REPORT_ID);
+      }
+      await this.exchangeNow(ksnakeEncodeMacroCommit(), KSNAKE_REPORT_ID);
+    });
+  }
+
+  /** Encode and commit all onboard macro slots in one vendor transaction. */
+  async setMacros(profiles: readonly KsnakeMacroProfile[]): Promise<void> {
+    await this.setMacroData(ksnakeEncodeMacroData(profiles));
+  }
+
+  /**
+   * Write all 8 key slots (SET_KEYS). The fixed DPI slot must remain intact;
+   * opaque macro/custom slots are preserved rather than guessed or rebuilt.
+   * Confirms by reading the map back.
    */
   async setKeys(keys: readonly KsnakeKeyBinding[]): Promise<KsnakeKeyBinding[]> {
-    const slots = [...keys].slice(0, 6);
-    if (slots.length !== 6) throw new Error(`Exactly 6 button bindings are required (got ${keys.length}).`);
+    const slots = [...keys].slice(0, 8);
+    if (slots.length !== 8) throw new Error(`Exactly 8 key bindings are required (got ${keys.length}).`);
     for (const [index, key] of slots.entries()) {
       const bytes = [key.type, key.code1, key.code2, key.code3];
       if (!bytes.every((b) => Number.isInteger(b) && b >= 0 && b <= 255)) {
         throw new Error(`Button ${index + 1}: binding bytes must be 0-255.`);
       }
-      if (!ksnakeIsKnownKeyType(key.type)) {
-        throw new Error(`Button ${index + 1}: type ${key.type} is not remappable (macro/custom bindings are preserved, not rewritten).`);
-      }
+    }
+    if (!equalBinding(slots[5], { type: 33, code1: 85, code2: 0, code3: 0 })) {
+      throw new Error("The fixed DPI button binding may not be changed.");
     }
     await this.exchangeRetrying(ksnakeEncodeSetKeys(slots), 2);
     await sleep(this.settleAfterWriteMs);
@@ -360,10 +496,10 @@ export class KsnakeHidClient {
 
   /**
    * Remap one button by display label (generic `setButtonMapping` interface).
-   * SET_KEYS always carries all six remappable slots, so the current map is
-   * re-read and the single slot replaced — confirmed by setKeys' read-back.
-   * Slot "Left" is locked (the vendor panel refuses drops there too); opaque
-   * slots elsewhere abort the write rather than risk bricking macros.
+   * SET_KEYS always carries all eight key slots, so the current map is
+   * re-read and the single user-visible slot replaced — confirmed by
+   * setKeys' read-back. Slot "Left" is locked (the vendor panel refuses
+   * drops there too).
    */
   async setButtonMapping(button: string, actionLabel: string): Promise<void> {
     const index = KSNAKE_BUTTON_NAMES.indexOf(button as (typeof KSNAKE_BUTTON_NAMES)[number]);
@@ -373,8 +509,8 @@ export class KsnakeHidClient {
     if (!binding) throw new Error(`Unknown button action "${actionLabel}".`);
     const current = await this.getKeys();
     if (!current) throw new Error("Could not read the current button map from the mouse.");
-    const slots = current.slice(0, KSNAKE_BUTTON_NAMES.length).map((slot) => ({ ...slot }));
-    slots[index] = binding;
+    const slots = current.map((slot) => ({ ...slot }));
+    slots[KSNAKE_BUTTON_WIRE_INDICES[index]] = binding;
     await this.setKeys(slots);
   }
 
@@ -386,6 +522,9 @@ export class KsnakeHidClient {
     const raw = await this.exchangeRetrying(ksnakeGetConfigRequest(), 3).catch(() => null);
     const config = raw ? ksnakeDecodeConfig(raw) : null;
     if (!config) throw new Error("Could not read the current config from the mouse.");
+    if (ksnakeDecodeLiftOff(config.lodValue) === null) {
+      throw new Error("The mouse did not report a readable lift-off setting; changing it is disabled.");
+    }
     await this.exchangeRetrying(ksnakeEncodeSetConfig({ ...config, lodValue: encoded }), 2);
     await sleep(this.settleAfterWriteMs);
     const confirmed = await this.readBackConfig(3);
@@ -406,6 +545,62 @@ export class KsnakeHidClient {
     const back = confirmed ? ksnakeDecodePollingRate(confirmed.reportRate) : null;
     if (back !== rate) throw new Error(`The mouse kept ${back ?? "?"} Hz instead of ${rate} Hz.`);
     return rate;
+  }
+
+  async setSleepTimeout(seconds: number): Promise<number> {
+    if (!this.getSleepOptions().includes(seconds)) {
+      throw new Error(`This mouse does not support a ${seconds}-second sleep timeout.`);
+    }
+    const raw = await this.exchangeRetrying(ksnakeGetConfigRequest(), 3).catch(() => null);
+    const config = raw ? ksnakeDecodeConfig(raw) : null;
+    if (!config) throw new Error("Could not read the current config from the mouse.");
+    const sleepLight = seconds / 60;
+    await this.exchangeRetrying(ksnakeEncodeSetConfig({ ...config, sleepLight }), 2);
+    await sleep(this.settleAfterWriteMs);
+    const confirmed = await this.readBackConfig(3);
+    if (confirmed?.sleepLight !== sleepLight) {
+      throw new Error(`The mouse kept a ${confirmed?.sleepLight ?? "?"}-minute sleep timeout instead of ${sleepLight}.`);
+    }
+    return seconds;
+  }
+
+  /** Sets the stored wheel direction and confirms the config byte. */
+  async setScrollDirection(direction: NonNullable<MouseStatus["scrollDirection"]>): Promise<NonNullable<MouseStatus["scrollDirection"]>> {
+    if (direction !== "Forward" && direction !== "Reverse") {
+      throw new Error(`Scroll direction must be Forward or Reverse (got ${direction}).`);
+    }
+    const raw = await this.exchangeRetrying(ksnakeGetConfigRequest(), 3).catch(() => null);
+    const config = raw ? ksnakeDecodeConfig(raw) : null;
+    if (!config) throw new Error("Could not read the current config from the mouse.");
+    const scrollFlag = direction === "Reverse" ? 1 : 0;
+    await this.exchangeRetrying(ksnakeEncodeSetConfig({ ...config, scrollFlag }), 2);
+    await sleep(this.settleAfterWriteMs);
+    const confirmed = await this.readBackConfig(3);
+    const confirmedDirection = confirmed?.scrollFlag === 1 ? "Reverse" : confirmed?.scrollFlag === 0 ? "Forward" : null;
+    if (confirmedDirection !== direction) {
+      throw new Error(`The mouse kept ${confirmedDirection ?? "?"} scroll direction instead of ${direction}.`);
+    }
+    return direction;
+  }
+
+  /** Sets the vendor lighting effect, then persists and confirms it. */
+  async setLighting(lighting: MouseLighting): Promise<MouseLighting> {
+    if (!lighting.mode) throw new Error("A lighting mode is required.");
+    const lightMode = ksnakeEncodeLightMode(lighting.mode);
+    if (lightMode === null) throw new Error(`Unsupported K-snake lighting mode: ${lighting.mode}.`);
+    // The vendor panel uses this immediate command for the LED controller and
+    // then keeps the same value in the full config block for the next connect.
+    await this.exchangeRetrying(ksnakeEncodeSetLightMode(lightMode), 2);
+    const raw = await this.exchangeRetrying(ksnakeGetConfigRequest(), 3).catch(() => null);
+    const config = raw ? ksnakeDecodeConfig(raw) : null;
+    if (!config) throw new Error("Could not read the current config from the mouse.");
+    await this.exchangeRetrying(ksnakeEncodeSetConfig({ ...config, lightMode }), 2);
+    await sleep(this.settleAfterWriteMs);
+    const confirmed = await this.readBackConfig(3);
+    if (confirmed?.lightMode !== lightMode) {
+      throw new Error(`The mouse kept lighting mode ${confirmed?.lightMode ?? "?"} instead of ${lightMode}.`);
+    }
+    return { ...lighting, mode: ksnakeDecodeLightMode(lightMode)! };
   }
 }
 
