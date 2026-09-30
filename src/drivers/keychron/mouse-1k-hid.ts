@@ -141,6 +141,7 @@ export class Keychron1kHidClient {
     } catch {
       return this.unreachableStatus(identity);
     }
+    const power = await this.readPower().catch(() => identity);
     const buttons = await this.readButtons().catch(() => null);
     const light = model?.light ? await this.readLight().catch(() => null) : null;
     const lod = keychronLiftOff(this.lodChoices(), settings.lod);
@@ -168,8 +169,8 @@ export class Keychron1kHidClient {
           stepDpi: DPI_STEP,
         },
       },
-      batteryPercent: identity.batteryPercent <= 100 ? identity.batteryPercent : null,
-      batteryState: identity.powerState === 1 ? "Charging" : identity.powerState === 2 ? "Full" : "Discharging",
+      batteryPercent: power.batteryPercent <= 100 ? power.batteryPercent : null,
+      batteryState: power.powerState === 1 ? "Charging" : power.powerState === 2 ? "Full" : "Discharging",
       dpi: settings.dpiStages[activeStage] ?? settings.dpiStages[0] ?? 800,
       dpiStages: settings.dpiStages.slice(0, settings.stageCount),
       activeDpiStage: activeStage,
@@ -393,6 +394,12 @@ export class Keychron1kHidClient {
       powerState: (bytes?.[11] ?? 0) & 0x03,
     };
     return this.identity;
+  }
+
+  /** 0x06 again: the battery sits in the identity answer, which is otherwise read once. */
+  private async readPower(): Promise<Pick<Identity, "batteryPercent" | "powerState">> {
+    const bytes = await this.request(REPORT_ID, [CMD.identity], (answer) => answer[0] === CMD.identity);
+    return { batteryPercent: bytes[10] ?? 0xff, powerState: (bytes[11] ?? 0) & 0x03 };
   }
 
   /** By USB product ID, then the identity's, then the connected mouse in a receiver's 0x03 list. */

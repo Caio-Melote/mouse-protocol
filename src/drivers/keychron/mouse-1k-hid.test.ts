@@ -179,6 +179,17 @@ test("reads identity, the 0x07 status, buttons and lighting", async () => {
   assert.equal(lastSent(fake, 0x62, 0x52)!.length, 64);
 });
 
+test("the battery is read again on every status read", async () => {
+  const fake = new FakeKeychron1kMouse();
+  const m3 = client(fake);
+  assert.equal((await m3.readStatus()).batteryPercent, 80);
+  fake.battery = 79;
+  fake.power = 0;
+  const status = await m3.readStatus();
+  assert.equal(status.batteryPercent, 79);
+  assert.equal(status.batteryState, "Discharging");
+});
+
 test("DPI writes reuse the 0x40 layout on feature report 0x51", async () => {
   const fake = new FakeKeychron1kMouse();
   const m3 = client(fake);
