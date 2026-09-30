@@ -1,0 +1,162 @@
+Rapoo VT9 Pro (1st gen) register sweep - raw console capture
+================================================================
+Date        2026-09-29
+Device      0x24AE:0x1205  "Rapoo Gaming Device"  (2.4G receiver, mouse awake)
+Tool        a local PowerShell/C# probe driving HidD_GetInputReport directly
+Transport   HidD_GetInputReport  (USB GET_REPORT(Input) control transfer)
+Protocol    output report 0xBA, frame [conn, cmd, len, addr u32 le, data...]
+
+The browser cannot do this: WebHID has no GET_REPORT(Input) call, so every
+0xBA write from a page succeeds and never returns data. The same USB request
+is HIDIOCGINPUT on Linux hidraw, and OpenMouse Bridge exposes it as
+receiveInputReport() (Windows: HidD_GetInputReport).
+
+Interface map (report lengths INCLUDE the report id byte)
+--------------------------------------------------------
+  pid=0x1205  usagePage=0x000c usage=0x0001  in=3  out=0   consumer control
+  pid=0x1205  usagePage=0x0001 usage=0x0080  in=2  out=0   system control
+  pid=0x1205  usagePage=0xff00 usage=0x000e  in=32 out=32  <-- 0xBA config channel
+  pid=0x1205  usagePage=0xff00 usage=0x0002  in=7  out=7   0xBB heartbeat
+  pid=0x1205  usagePage=0xff00 usage=0x0002  in=10 out=10
+  pid=0x1205  usagePage=0xff0b usage=0x0104  in=61 out=61 feat=61  0x2A family
+
+Decision
+--------
+  usagePage=0xff0b usage=0x0104 out=61: SetOutputReport failed (report 0xBA is
+      not declared on that interface, only 0x2A is)
+  usagePage=0xff00 usage=0x000e out=32: ANSWER with connection byte 0xA5
+      (2.4G dongle). Connection byte 0xFF (wired) got no answer, which is
+      expected: the mouse is on the receiver right now, not on a cable.
+
+Answer frame
+------------
+  sent   conn=0xA5 cmd=0xA4 len=4 addr=0x880
+  answer 01 00 00 00 82 00 82 ff 00 00 ... (32 bytes)
+         [0]=0x01 status OK   [1]=0x00 not-a-battery-answer   [4..] payload
+  NOTE: HidD_GetInputReport strips the report id, so the status byte is at
+  index 0 and the payload at index 4 - exactly the layout mousectl documents.
+
+Register sweep
+--------------
+  0x880  PERF (polling)
+      raw: 82 00 82 ff
+      2.4G  = 0x82 -> 4000 Hz
+      [1]   = 0x00
+      cable = 0x82 -> 4000 Hz
+      [3]   = 0xff
+
+  0x884  SENSOR (lift-off, motion sync)
+      raw: 01 01 01 00
+      lift-off index = 1        (MV scale -> 1.0 mm)
+      motion sync    = 1        (on)
+      [2]=0x01 [3]=0x00
+
+  0x888  DPI X stages
+      raw: 90 01 20 03 b0 04 40 06 80 0c 00 19 90 65 02 00
+      stages = [400, 800, 1200, 1600, 3200, 6400, 26000]
+      stage count byte [14] = 2 -> 3 enabled        [15] = 0x00
+
+  0x898  DPI active stage
+      raw: 01 00 02 01
+      active stage = 1 (0-based) -> the second stage
+
+  0x8C0  TIMING (debounce, sleep, flags)
+      raw: 04 04 78 03
+      press debounce   = 4   -> 16 ms
+      release debounce = 4   -> 16 ms
+      sleep timeout    = 120 min
+      flags            = 0x03 (bit0 set = angle snap OFF, bit1 set = ripple OFF)
+
+  0x8C4  ANGLE
+      raw: 00 00 01 00
+      sensor angle = 0 deg
+
+  0x8C8  DPI Y stages
+      raw: 90 01 20 03 b0 04 40 06 80 0c 00 19 90 65 02 00
+      identical to 0x888
+
+  battery query (cmd 0xAA at address 0)
+      01 01 62 00 00 00 00 00
+      [0]=0x01 status OK  [1]=0x01 battery-answer marker  [2]=0x62 = 98 %
+
+What this settles
+-----------------
+  * The 1st-gen configuration channel works. It was never a firmware dead end,
+    only a missing API in the browser.
+  * The register map is byte-for-byte the same family layout the 2nd-gen
+    official driver documents: profile 0 base 0x600 plus offsets
+    640 / 644-645 / 648-662 / 664 / 704-707 / 708 / 712.
+  * Polling-rate codes match: 0x08=125 0x04=250 0x02=500 0x01=1000
+    0x84=2000 0x82=4000 0x81=8000 Hz.
+  * Battery answers are distinguishable from block answers by byte[1].
+
+Write path (-writetest, idempotent: writes back exactly the bytes just read)
+--------------------------------------------------------------------------
+  == WRITE TEST (idempotent: writes back exactly the bytes it just read)
+     before : 82 00 82 ff
+     write  : busy->OK, command 0xA5 accepted
+     after  : 82 00 82 ff
+     verdict: read-back matches - the read/write channel is confirmed
+
+  So both directions work: command 0xA4 to read, 0xA5 to write, both answered
+  through GET_REPORT(Input) with the busy -> OK handshake. The device state is
+  unchanged because the written bytes were the ones already stored.
+
+Wired pass (same day, cable plugged in, receiver still attached)
+---------------------------------------------------------------
+  With the cable in, Windows keeps BOTH devices: 12 HID collections,
+  6 for pid 0x1205 and 6 for pid 0x4405, identical layout per device:
+
+    0x000C:0x0001  in=3
+    0x0001:0x0080  in=2
+    0xFF00:0x000E  in=32 out=32   <-- the 0xBA config channel
+    0xFF00:0x0002  in=7  out=7
+    0xFF00:0x0002  in=10 out=10
+    0xFF0B:0x0104  in=61 out=61 feat=61
+
+  Once the cable takes over, the receiver (0x1205) stops answering the 0xBA
+  channel and the wired device (0x4405) answers it. Register values are
+  byte-for-byte identical to the wireless pass:
+
+    0x880  82 00 82 ff    -> 4000 Hz on both slots
+    0x884  01 01 01 00    -> LOD index 1, motion sync on
+    0x888  90 01 20 03 b0 04 40 06 80 0c 00 19 90 65 02 00
+    0x898  01 00 02 01    -> active stage 1 (0-based)
+    0x8C0  04 04 78 03    -> 16/16 ms debounce, 120 min sleep, flags 0x03
+    0x8C4  00 00 01 00    -> 0 deg
+    0x8C8  same as 0x888
+
+  A 0x2A status block is readable on the 0xFF0B:0x0104 interface of BOTH
+  devices with HidD_GetFeature, even while the 0xBA channel is silent:
+
+    pid=0x4405 -> 2a 01 00 00 04 21 50 00 00 62 ...
+    pid=0x1205 -> 2a 01 00 00 04 11 20 00 00 62 ...
+                  ^^ ack   ^^^^^^^^^^ differ     ^^ 0x62 = 98 %
+
+The connection byte is NOT a discriminator (measured, not assumed)
+------------------------------------------------------------------
+  mousectl uses 0xFF for wired and 0xA5 for the dongle. On this mouse both
+  answer, as do 0x00 / 0x01 / 0x5A. Measured with the cable plugged in,
+  4-byte read at 0x898, 8 attempts per candidate:
+
+    conn 0xFF: 2/8 answered
+    conn 0xA5: 3/8 answered
+    conn 0x00: 2/8 answered
+    conn 0x01: 4/8 answered
+    conn 0x5A: 3/8 answered
+
+  So the field is not validated on this model. Use 0xA5, and never read a
+  failure as "wrong connection type".
+
+The channel is lossy, and it needs an awake mouse
+-------------------------------------------------
+  * Per-attempt success is roughly 40 %: frames are dropped without the device
+    ever going busy. Reads need retries - four rounds of four sends with a
+    120 ms gap read the whole map reliably (three wired runs + one wireless
+    run all produced the same table).
+  * Five back-to-back reads of the same register returned 1/5 and 0/5 in two
+    runs, and the very next sweep then read every address. "No answer" is not
+    "unsupported register".
+  * When the mouse sits idle the 0xBA channel stops answering entirely, while
+    HidD_GetFeature(0x2A) keeps returning the status block on both devices.
+    Move the mouse and re-run.

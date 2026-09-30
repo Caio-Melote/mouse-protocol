@@ -33,3 +33,4 @@ export * as redragon from "./redragon/index.js";
 export * as delux from "./delux/index.js";
 export * as bytech from "./bytech/index.js";
 export * as motospeed from "./motospeed/index.js";
+export * as rapoo from "./rapoo/index.js";

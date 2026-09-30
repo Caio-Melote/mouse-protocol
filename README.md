@@ -66,6 +66,7 @@ checklist.
 | RAWM | `@openmouse/protocol/rawm` |
 | Pulsar / GravaStar | `@openmouse/protocol/pulsar` |
 | Razer legacy/current | `@openmouse/protocol/razer` |
+| Rapoo VT9 Pro | `@openmouse/protocol/rapoo` |
 | Razer V4 | `@openmouse/protocol/razer-v4` |
 | Ryunix | `@openmouse/protocol/ryunix` |
 | SteelSeries Rival 3 (Gen 1) | `@openmouse/protocol/steelseries` |

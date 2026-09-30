@@ -99,6 +99,12 @@ import {
   RYUNIX_VENDOR_ID,
 } from "@openmouse/protocol/ryunix";
 import {
+  RAPOO_CONFIG_USAGE,
+  RAPOO_CONFIG_USAGE_PAGE,
+  RAPOO_PRODUCT_IDS,
+  RAPOO_VENDOR_ID,
+} from "@openmouse/protocol/rapoo";
+import {
   REDRAGON_CONFIG_USAGE,
   REDRAGON_CONFIG_USAGE_PAGE,
   REDRAGON_PRODUCT_IDS,
@@ -110,6 +116,7 @@ export const VENDOR_ID = {
   vaxee: VAXEE_VENDOR_ID,
   asus: ASUS_VENDOR_ID,
   ryunix: RYUNIX_VENDOR_ID,
+  rapoo: RAPOO_VENDOR_ID,
   motospeed: MOTOSPEED_VENDOR_ID,
   pulsar: 0x3710,
   endgameGear: 0x3367,
@@ -688,6 +695,15 @@ export const RYUNIX_HID_FILTERS: HIDDeviceFilter[] = [...RYUNIX_PRODUCT_IDS].map
   usage: RYUNIX_USAGE,
 }));
 
+// Both the 2.4 GHz receiver and the mouse on its cable answer on the same
+// usage page and usage, so one filter per product id covers the family.
+export const RAPOO_HID_FILTERS: HIDDeviceFilter[] = [...RAPOO_PRODUCT_IDS].map((productId) => ({
+  vendorId: RAPOO_VENDOR_ID,
+  productId,
+  usagePage: RAPOO_CONFIG_USAGE_PAGE,
+  usage: RAPOO_CONFIG_USAGE,
+}));
+
 export const MOTOSPEED_HID_FILTERS: HIDDeviceFilter[] = MOTOSPEED_PRODUCTS.map(({ productId }) => ({
   vendorId: MOTOSPEED_VENDOR_ID,
   productId,
@@ -802,4 +818,5 @@ export const SUPPORTED_HID_FILTERS: HIDDeviceFilter[] = [
   ...INCOTT_HID_FILTERS,
   ...HYPERX_HID_FILTERS,
   ...RYUNIX_HID_FILTERS,
+  ...RAPOO_HID_FILTERS,
 ];
