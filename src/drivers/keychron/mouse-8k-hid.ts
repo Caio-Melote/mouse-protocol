@@ -1,5 +1,6 @@
 import type { MouseLighting, MouseStatus } from "../mouse-types.ts";
 import {
+  KEYCHRON_8K_NORDIC_PRODUCT_IDS,
   KEYCHRON_M6_COMMAND_REPORT_ID as COMMAND_REPORT_ID,
   KEYCHRON_M6_SETTINGS_REPORT_ID as SETTINGS_REPORT_ID,
   KEYCHRON_M6_STATUS_COMMAND as STATUS_COMMAND,
@@ -197,6 +198,11 @@ export class Keychron8kHidClient {
 
   /** Launcher treats any Keychron device with this collection as an "8k" mouse, so this does too. */
   static isSupported(device: HIDDevice): boolean {
+    // The G3 Air and its Ultra-Link receivers speak the 8K Nordic protocol
+    // instead, and their own driver claims them by product ID. A G3 Air can
+    // still expose a 0xffc1 collection, so exclude those IDs here or the
+    // collection match would shadow the Nordic driver.
+    if (KEYCHRON_8K_NORDIC_PRODUCT_IDS.includes(device.productId)) return false;
     return device.vendorId === KEYCHRON_VENDOR_ID
       && device.collections.some((collection) =>
         collection.usagePage === USAGE_PAGE
