@@ -445,7 +445,7 @@ export class RapooHidClient {
       if (attempt > 0) await delay(EXCHANGE_RETRY_MS);
 
       try {
-        await this.device.sendReport(RAPOO_CONFIG_REPORT_ID, frame);
+        await this.device.sendReport(RAPOO_CONFIG_REPORT_ID, frame.buffer as ArrayBuffer);
       } catch {
         continue;
       }
@@ -480,7 +480,7 @@ export class RapooHidClient {
     const frame = encodeRapooBatteryQuery();
     for (let round = 0; round < BATTERY_ROUNDS; round += 1) {
       try {
-        await this.device.sendReport(RAPOO_CONFIG_REPORT_ID, frame);
+        await this.device.sendReport(RAPOO_CONFIG_REPORT_ID, frame.buffer as ArrayBuffer);
       } catch {
         return null;
       }
