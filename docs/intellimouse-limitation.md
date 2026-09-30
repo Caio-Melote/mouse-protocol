@@ -59,10 +59,10 @@ Because these limitations stem from unchangeable device firmware and strict OS/B
 
 To ensure a seamless user experience, the OpenMouse WebHID driver catches these Windows-specific read failures (either via timeouts for the Classic or caught exceptions for the Pro) and supplies default "dummy" data. This ensures the UI successfully loads and allows the user to continue writing/configuring their mouse.
 
-## The Native Desktop App Workaround
+## The Native Desktop & Bridge Workaround
 
-While WebHID restricts access, native desktop applications (like the OpenMouse Desktop App) can bypass these restrictions using a loophole in the Windows HID API.
+While WebHID restricts access, native desktop companion applications (like the OpenMouse Desktop App and the OpenMouse Bridge) can bypass these restrictions using a loophole in the Windows HID API.
 
 On Windows, the standard `ReadFile()` system call is blocked for System Mouse and Consumer Control collections. However, the `HidD_GetInputReport` API—which issues a raw USB Control Transfer (Endpoint 0) instead of reading from the interrupt pipeline—is **not** blocked by the OS.
 
-Because both the Classic and Pro IntelliMouse firmware correctly respond to a Control Transfer request for their Input Reports, the OpenMouse Desktop app implements a custom `receiveInputReport()` method that leverages `HidD_GetInputReport`. By aggressively polling this method, the Desktop app successfully retrieves the true device status for both mice on Windows entirely in user-mode, without requiring administrator privileges or custom kernel drivers.
+Because both the Classic and Pro IntelliMouse firmware correctly respond to a Control Transfer request for their Input Reports, both the OpenMouse Desktop app and OpenMouse Bridge implement a custom `receiveInputReport()` method that leverages `HidD_GetInputReport`. By aggressively polling this method over WebSockets or Tauri IPC, the companion apps successfully retrieve the true device status for both mice on Windows entirely in user-mode, without requiring administrator privileges or custom kernel drivers.

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { LamzuHidClient } from "./hid.ts";
+import { AttackSharkHidClient } from "../attackshark/hid.ts";
 import { deviceBrand } from "../registry.ts";
 import {
   ATTACKSHARK_PRODUCT_IDS,
@@ -91,11 +92,12 @@ test("CRDRAKO KO-ONE receiver addresses the mouse as target 0x02", async () => {
   assert.ok(mouseRequests.every((packet) => packet[2] === 0x02));
 });
 
-function fakeR5Ultra(productId: 0x0046 | 0x0047, busyBatteryReplies = 0, activeProfile = 1) {
+function fakeR5Ultra(productId: number, busyBatteryReplies = 0, activeProfile = 1) {
   const sent: Uint8Array[] = [];
   let batterySends = 0;
   let liftOff = 0x01;
   let debounce = 0x00;
+  let dongleLed = 0x00;
   const device = {
     vendorId: LAMZU_VENDOR_ID,
     productId,
@@ -120,6 +122,7 @@ function fakeR5Ultra(productId: 0x0046 | 0x0047, busyBatteryReplies = 0, activeP
       const reply = new Uint8Array(64);
       if (page === 0x01 && command === 0x08) liftOff = request[7]!;
       if (page === 0x00 && command === 0x08) debounce = request[7]!;
+      if (page === 0x02 && command === 0x04) dongleLed = request[7]!;
       if (page === 0x00 && command === 0x83) {
         batterySends += 1;
         if (batterySends <= busyBatteryReplies) {
@@ -143,7 +146,9 @@ function fakeR5Ultra(productId: 0x0046 | 0x0047, busyBatteryReplies = 0, activeP
                   ? [0x00, 0x64]
                   : page === 0x00 && command === 0x81
                     ? [0x00, 0x00, 0x01, 0x02]
-                    : [0x01, 0x01];
+                    : page === 0x02 && command === 0x84
+                      ? [0x01, dongleLed]
+                      : [0x01, 0x01];
       reply[0] = 0xa1;
       reply[3] = payload.length;
       reply[4] = page;
@@ -172,7 +177,7 @@ test("the Attack Shark R5 Ultra wireless decodes through the shared driver", asy
   assert.equal(status.batteryState, "Discharging");
   assert.equal(status.dpi, 1600);
   assert.equal(status.pollingRateHz, 8000);
-  assert.deepEqual(status.supportedPollingRates, [500, 1000, 2000, 4000, 8000]);
+  assert.deepEqual(status.supportedPollingRates, [125, 250, 500, 1000, 2000, 4000, 8000]);
   assert.deepEqual(status.firmware, ["Mouse 1.2", "Dongle 1.2"]);
 });
 
@@ -213,8 +218,45 @@ test("the Attack Shark R5 Ultra addresses the reported active profile", async ()
     + scoped.map((packet) => [...packet.slice(0, 8)].map((b) => b.toString(16).padStart(2, "0")).join(" ")).join("\n"));
 });
 
-test("the catalog offers the wired and wireless R5 Ultra", () => {
-  assert.deepEqual([...ATTACKSHARK_PRODUCT_IDS], [0x0046, 0x0047]);
+test("the R5 Ultra receiver LED is read and switched on the dongle target", async () => {
+  const { device, sent } = fakeR5Ultra(0x0047);
+  const client = new LamzuHidClient(device);
+  assert.equal((await client.readStatus()).dongleLedEnabled, false);
+
+  assert.equal(await client.setDongleLed(true), true);
+  // Attack Shark Core 2.0.7.9 DongleLEDOnOff: 00 00 00 02 02 04 <profile> <on>.
+  const write = sent.find((packet) => packet[4] === 0x02 && packet[5] === 0x04)!;
+  assert.deepEqual([...write.slice(0, 8)], [0x00, 0x00, 0x00, 0x02, 0x02, 0x04, 0x01, 0x01]);
+  assert.equal((await client.readStatus()).dongleLedEnabled, true);
+
+  const wired = fakeR5Ultra(0x0046);
+  assert.equal((await new LamzuHidClient(wired.device).readStatus()).dongleLedEnabled, null);
+  assert.ok(!wired.sent.some((packet) => packet[4] === 0x02));
+});
+
+test("the catalog offers the wired and wireless R5 Ultra, R6 and R8", () => {
+  assert.deepEqual([...ATTACKSHARK_PRODUCT_IDS], [0x0046, 0x0047, 0x0021, 0x0022, 0x003a, 0x003b]);
+});
+
+test("the Attack Shark R6 and R8 run on the CompX driver, not the Attack Shark one", async () => {
+  const cases = [
+    [0x0021, "R6", "Wired"], [0x0022, "R6", "Wireless"],
+    [0x003a, "R8", "Wired"], [0x003b, "R8", "Wireless"],
+  ] as const;
+  for (const [productId, model, connectionType] of cases) {
+    const { device } = fakeR5Ultra(productId);
+    assert.equal(LamzuHidClient.isSupported(device), true);
+    assert.equal(AttackSharkHidClient.isSupported(device), false);
+    const client = new LamzuHidClient(device);
+    const status = await client.readStatus();
+    assert.equal(status.name, `Attack Shark ${model}`);
+    assert.equal(status.ui?.family, "attack-shark");
+    assert.equal(status.connectionType, connectionType);
+    assert.equal(client.getDpiOptions().at(-1), 42000);
+    assert.deepEqual(status.supportedPollingRates, connectionType === "Wired"
+      ? [125, 250, 500, 1000]
+      : [125, 250, 500, 1000, 2000, 4000, 8000]);
+  }
 });
 
 /**

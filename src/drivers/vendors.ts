@@ -1,8 +1,8 @@
 import {
-  ASUS_GLADIUS_II_USAGE,
-  ASUS_GLADIUS_II_USAGE_PAGE,
+  ASUS_PRODUCT_IDS,
+  ASUS_USAGE,
+  ASUS_USAGE_PAGE,
   ASUS_VENDOR_ID,
-  ROG_GLADIUS_II_PRODUCT_ID,
 } from "../asus/index.ts";
 import { ATK_COMPX_PRODUCT_IDS } from "./atk/products.ts";
 import { MICROSOFT_PRODUCT_CLASSIC, MICROSOFT_PRODUCT_PRO, MICROSOFT_VENDOR_ID, MICROSOFT_CLASSIC_USAGE_PAGE, MICROSOFT_CLASSIC_USAGE, MICROSOFT_PRO_USAGE_PAGE, MICROSOFT_PRO_USAGE } from "../microsoft/index.ts";
@@ -104,15 +104,18 @@ import {
   REDRAGON_PRODUCT_IDS,
   REDRAGON_VENDOR_ID,
 } from "@openmouse/protocol/redragon";
+import { MOTOSPEED_PRODUCTS, MOTOSPEED_USAGE_PAGE, MOTOSPEED_VENDOR_ID } from "@openmouse/protocol/motospeed";
 
 export const VENDOR_ID = {
   vaxee: VAXEE_VENDOR_ID,
   asus: ASUS_VENDOR_ID,
   ryunix: RYUNIX_VENDOR_ID,
+  motospeed: MOTOSPEED_VENDOR_ID,
   pulsar: 0x3710,
   endgameGear: 0x3367,
   wlmouse: 0x36a7,
   lamzu: 0x373e,
+  bytech: 0x372e,
   lamzuInca: LAMZU_INCA_VENDOR_ID,
   attackshark: 0x373e,
   logitech: 0x046d,
@@ -160,22 +163,15 @@ export const VENDOR_ID = {
 } as const;
 
 /**
- * ROG Gladius II P502 configuration interface.
- *
- * Hardware verified:
- * VID 0x0B05
- * PID 0x1845
- * Usage Page 0xFF01
- * Usage 0x0001
+ * ASUS ROG / TUF configuration interface (usage page 0xFF01, usage 0x0001),
+ * verified on the Gladius II P502 and assumed for the rest of the table.
  */
-export const ASUS_GLADIUS_II_HID_FILTERS: HIDDeviceFilter[] = [
-  {
-    vendorId: ASUS_VENDOR_ID,
-    productId: ROG_GLADIUS_II_PRODUCT_ID,
-    usagePage: ASUS_GLADIUS_II_USAGE_PAGE,
-    usage: ASUS_GLADIUS_II_USAGE,
-  },
-];
+export const ASUS_HID_FILTERS: HIDDeviceFilter[] = ASUS_PRODUCT_IDS.map((productId) => ({
+  vendorId: ASUS_VENDOR_ID,
+  productId,
+  usagePage: ASUS_USAGE_PAGE,
+  usage: ASUS_USAGE,
+}));
 
 export const MCHOSE_A5_HID_FILTERS: HIDDeviceFilter[] = [
   ...[...MCHOSE_A5_GEN1_PRODUCTS.keys()].map((productId) => ({
@@ -325,6 +321,12 @@ export const KEYCHRON_NAPE_HID_FILTERS: HIDDeviceFilter[] = KEYCHRON_NAPE_PRODUC
 export const KEYCHRON_M6_HID_FILTERS: HIDDeviceFilter[] = [
   { vendorId: VENDOR_ID.keychron, productId: 0xd060, usagePage: 0xffc1, usage: 0x01 },
   { vendorId: VENDOR_ID.keychron, productId: 0xd029, usagePage: 0xffc1, usage: 0x01 },
+];
+
+// Keychron 4K mice and their receiver. No product ID: the receiver's is unknown,
+// and Launcher treats any Keychron device with this collection as a 4K mouse.
+export const KEYCHRON_4K_HID_FILTERS: HIDDeviceFilter[] = [
+  { vendorId: VENDOR_ID.keychron, usagePage: 0xff0a, usage: 0x01 },
 ];
 
 // moddoMOUSE exposes its vendor config interface on usage page 0xff, usage 0x01
@@ -498,7 +500,15 @@ export const TEEVOLUTION_PRODUCT_IDS = [0xf520, 0xf523, 0xf5bb, 0xf522] as const
 // Logitech HID++ control interfaces addressed through a receiver slot.
 // 0xc54d is the GPX2/DEX receiver, 0xc543 the G PRO 2 receiver, 0xc547 the
 // Superlight 1 / old-Generic receiver, 0xc539 is HERO-era Lightspeed, 0xc0a8
-// is the PRO X 2 Superstrike USB interface, and Bolt product ids live in
+// is the PRO X 2 Superstrike USB interface, 0x40bd is its own dedicated
+// Lightspeed receiver (confirmed from a user diagnostic - transportIds
+// {Wireless: "40BD", USB: "C0A8"}), 0xc54f is the PRO X 3 Superstrike's own
+// Lightspeed receiver (a mouse + keyboard + vendor-interface composite that
+// answers HID++ and was rejected as "not a mouse" while unknown; confirmed on
+// hardware - the mouse connects as PRO X3 SUPERSTRIKE on 0x046d:0xc54f),
+// 0xc52b and 0xc532 are Unifying receivers (the receiver speaks HID++ 1.0, but
+// MX Vertical / MX Master 2S / MX Anywhere 2 behind it are HID++ 2.0 on slots
+// 1..6, often past a keyboard paired first), and Bolt product ids live in
 // ./logitech/protocol with the direct-connect list.
 export const LOGITECH_RECEIVER_PRODUCT_IDS = [
   0xc54d,
@@ -506,6 +516,10 @@ export const LOGITECH_RECEIVER_PRODUCT_IDS = [
   0xc539,
   0xc0a8,
   0xc547,
+  0x40bd,
+  0xc54f,
+  0xc52b,
+  0xc532,
   ...LOGITECH_BOLT_PRODUCT_IDS,
 ] as const;
 
@@ -674,6 +688,11 @@ export const RYUNIX_HID_FILTERS: HIDDeviceFilter[] = [...RYUNIX_PRODUCT_IDS].map
   usage: RYUNIX_USAGE,
 }));
 
+export const MOTOSPEED_HID_FILTERS: HIDDeviceFilter[] = MOTOSPEED_PRODUCTS.map(({ productId }) => ({
+  vendorId: MOTOSPEED_VENDOR_ID,
+  productId,
+  usagePage: MOTOSPEED_USAGE_PAGE,
+}));
 
 export const VAXEE_HID_FILTERS: HIDDeviceFilter[] = VAXEE_PRODUCT_IDS.map((productId) => ({
   vendorId: VAXEE_VENDOR_ID, productId, usagePage: VAXEE_USAGE_PAGE, usage: VAXEE_USAGE,
@@ -681,9 +700,10 @@ export const VAXEE_HID_FILTERS: HIDDeviceFilter[] = VAXEE_PRODUCT_IDS.map((produ
 
 export const SUPPORTED_HID_FILTERS: HIDDeviceFilter[] = [
   ...VAXEE_HID_FILTERS,
-  ...ASUS_GLADIUS_II_HID_FILTERS,
+  ...ASUS_HID_FILTERS,
   ...DAREU_HID_FILTERS,
   ...REDRAGON_HID_FILTERS,
+  ...MOTOSPEED_HID_FILTERS,
   ...ZAUNKOENIG_PRODUCT_IDS.map((productId) => ({
     vendorId: ZAUNKOENIG_VENDOR_ID,
     productId,
@@ -706,6 +726,7 @@ export const SUPPORTED_HID_FILTERS: HIDDeviceFilter[] = [
   // interfaces that lack the feature-report-0 control channel.
   { vendorId: VENDOR_ID.lamzu },
   ...LAMZU_INCA_HID_FILTERS,
+  { vendorId: VENDOR_ID.bytech, usagePage: 0xff00, usage: 0x0001 },
   { vendorId: VENDOR_ID.orbital, usagePage: 0xff0a, usage: 1 },
   ...[...RAWM_PRODUCT_IDS].map((productId) => ({
     vendorId: VENDOR_ID.rawm,
@@ -750,6 +771,7 @@ export const SUPPORTED_HID_FILTERS: HIDDeviceFilter[] = [
   ...RAZER_COBRA_FILTERS,
   ...KEYCHRON_NAPE_HID_FILTERS,
   ...KEYCHRON_M6_HID_FILTERS,
+  ...KEYCHRON_4K_HID_FILTERS,
   ...RAZER_REGISTRY_FILTERS,
   ...RAZER_DEATHADDER_V2_FILTERS,
   ...EGG_WE_HID_FILTERS,
@@ -765,7 +787,10 @@ export const SUPPORTED_HID_FILTERS: HIDDeviceFilter[] = [
   // Fantech mice use vendor usage page 0xFFFF, usage 0x02 for configuration.
   { vendorId: VENDOR_ID.fantech, usagePage: 0xffff, usage: 0x02 },
   ...WALLHACK_HID_FILTERS,
-  ...[...GWOLVES_PRODUCTS.keys()].map((productId) => ({ vendorId: VENDOR_ID.gwolves, productId, usagePage: 0xff02 })),
+  // The XVI generation's 64-byte feature report is found by shape, not usage
+  // page (see gwolves/xvi-hid.ts), so those models match on product id alone.
+  ...[...GWOLVES_PRODUCTS].filter(([, product]) => product.protocol !== "xvi-new").map(([productId, product]) => (
+    product.protocol === "vgn" ? { vendorId: VENDOR_ID.gwolves, productId, usagePage: 0xff02 } : { vendorId: VENDOR_ID.gwolves, productId })),
   ...STEELSERIES_RIVAL3_FILTERS,
   { vendorId: VENDOR_ID.glorious },
   ...GLORIOUS_CLASSIC_HID_FILTERS,

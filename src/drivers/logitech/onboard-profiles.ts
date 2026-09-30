@@ -53,8 +53,23 @@ const PROFILE_FORMAT_NAMES: Record<number, string> = {
  * hardware sanity check on a G502/G403-family device is still required before
  * release — see docs/logitech-onboard-profiles.md.
  */
-const VERIFIED_FORMATS = new Set([2, 3, 4, 7]);
-const WRITABLE_FORMATS = new Set([2, 3, 4, 7]);
+/**
+ * Format 8 (PRO X 2 / PRO X 3 Superstrike) joins this set on a CRC-matching
+ * full dump: profile sector 1 from a PRO X 3 diagnostic, all 255 bytes, checks
+ * out against its own stored CRC (0x2a38, identical on the PRO X 2). That
+ * confirms the layout, so profiles can be opened, switched and enabled.
+ */
+const VERIFIED_FORMATS = new Set([2, 3, 4, 7, 8]);
+/**
+ * Format 8 is a testing-phase addition: the same base-v6 stage table and write
+ * sequence format 7 already proved on hardware, and its layout is verified, but
+ * a DPI write to it has been confirmed on hardware (a PRO X 3 Superstrike), and
+ * the per-stage lift-off byte sits in the same 5-byte stage entries. Both are
+ * written; openActiveProfile() still re-reads the live sector and refuses on a
+ * bad CRC. Pull it back out if a write-then-reconnect check does not come back
+ * clean.
+ */
+const WRITABLE_FORMATS = new Set([2, 3, 4, 7, 8]);
 const PROFILE_WRITE_PROBE_FORMATS = new Set([2, 3, 4]);
 const FACTORY_RESET_FORMATS = new Set([7]);
 
@@ -272,14 +287,22 @@ const FORMAT_CAPABILITIES: Record<number, ProfileFormatCapabilities> = {
     bunnyHop: true,
   },
   // Format 8 carries the analog-button block, so it is the PRO X 2 Superstrike
-  // format. Its two levels are what the driver has always offered and were
-  // never checked against a real device; its sensor range was never captured
-  // either, so slots stay unavailable rather than being assumed to match
-  // format 7.
+  // format. Confirmed from two user diagnostics, a PRO X 2 and a PRO X 3
+  // Superstrike, whose profile sector 1 (raw memory reads) decode to the same
+  // five factory stages - 800/1200/1600/2400/3200, all X=Y linked - at the
+  // same 2-index + 5x5-byte layout base v6 already uses, matching format 7's
+  // geometry exactly. Every stage's stored lift-off byte was 2, which
+  // LOD_ENCODING reads as "Medium" - a level the old two-entry list never
+  // allowed, so it was simply wrong, not just unconfirmed. The DPI range is
+  // the widest grid seen: the PRO X 3's 0x2202 list runs 100-48000 (steps of
+  // 1/2/5/10/20/50/100/125/200 across its ranges), stored as plain 16-bit
+  // values; callers narrow it to the connected sensor's own list, so an older
+  // sensor is never offered the X3's ceiling. Writable as a testing-phase step -
+  // see WRITABLE_FORMATS.
   8: {
-    supportedLods: ["Low", "High"],
+    supportedLods: ["Low", "Medium", "High"],
     lodEncoding: LOD_ENCODING,
-    dpiStages: null,
+    dpiStages: { maxStages: 5, minDpi: 100, maxDpi: 48000, stepDpi: 50 },
     // Captured behavior: the wireless link reaches 8 kHz while USB is capped
     // at 1 kHz. Transport selection is resolved from HID++ identity data.
     reportRates: { wirelessMaxHz: 8000, wiredMaxHz: 1000 },
@@ -605,6 +628,82 @@ const COMPONENTS_V6: ComponentSpec[] = [
 const BUNNY_HOPPING: ComponentSpec = { offset: 0x25, size: 1, name: "bunny_hopping" };
 const ANALOG_BUTTON: ComponentSpec = { offset: 0x26, size: 6, name: "analog_button" };
 
+/** One primary button's HITS settings as the profile stores them. */
+export interface AnalogButtonProfileValues {
+  actuation: number;
+  rapidTrigger: number;
+  haptics: number;
+  rapidTriggerEnabled: boolean;
+}
+
+const ANALOG_BUTTON_COUNT = 2;
+const ANALOG_BUTTON_BYTES = 3;
+
+/**
+ * HITS settings held in a format 8+ profile's `analog_button` block (offset
+ * 0x26, one three-byte entry per primary button). The bytes are the live 0x1B0C
+ * values verbatim: [actuation << 2, rapid trigger << 2 | on, haptics << 2].
+ *
+ * This copy is what the mouse loads at power-on. Writing only the live feature
+ * changes the working values, which a power cycle discards - a PRO X 3
+ * Superstrike booted back to the stored 5 / 2 (off) / 3 after every live-only
+ * change, and its stored block never changed in three captures.
+ */
+export function decodeAnalogButtons(
+  sector: Uint8Array,
+  profileFormatId: number,
+): AnalogButtonProfileValues[] | null {
+  if (profileFormatId < 8) return null;
+  return Array.from({ length: ANALOG_BUTTON_COUNT }, (_, button) => {
+    const base = ANALOG_BUTTON.offset + button * ANALOG_BUTTON_BYTES;
+    return {
+      actuation: (sector[base] ?? 0) >> 2,
+      rapidTrigger: (sector[base + 1] ?? 0) >> 2,
+      haptics: (sector[base + 2] ?? 0) >> 2,
+      rapidTriggerEnabled: ((sector[base + 1] ?? 0) & 0x01) === 1,
+    };
+  });
+}
+
+/**
+ * Writes HITS settings for the named primary buttons into a copy of the
+ * profile, leaving every other byte alone. A button whose `rapidTriggerEnabled`
+ * is left out keeps its stored on/off bit.
+ */
+export function encodeAnalogButtons(
+  sector: Uint8Array,
+  profileFormatId: number,
+  buttons: ReadonlyArray<{
+    button: number;
+    actuation: number;
+    rapidTrigger: number;
+    haptics: number;
+    rapidTriggerEnabled?: boolean;
+  }>,
+): Uint8Array {
+  if (profileFormatId < 8) throw new Error("This profile format has no analog button settings.");
+  const result = sector.slice();
+  for (const entry of buttons) {
+    if (!Number.isInteger(entry.button) || entry.button < 0 || entry.button >= ANALOG_BUTTON_COUNT) {
+      throw new Error("Analog button settings exist for the left and right primary buttons only.");
+    }
+    for (const value of [entry.actuation, entry.rapidTrigger, entry.haptics]) {
+      // Each value is stored in bits 7..2, so it has six bits.
+      if (!Number.isInteger(value) || value < 0 || value > 0x3f) {
+        throw new Error("An analog button setting is outside what the profile can store.");
+      }
+    }
+    const base = ANALOG_BUTTON.offset + entry.button * ANALOG_BUTTON_BYTES;
+    const enabledBit = entry.rapidTriggerEnabled === undefined
+      ? (result[base + 1] ?? 0) & 0x01
+      : entry.rapidTriggerEnabled ? 1 : 0;
+    result[base] = entry.actuation << 2;
+    result[base + 1] = (entry.rapidTrigger << 2) | enabledBit;
+    result[base + 2] = entry.haptics << 2;
+  }
+  return applyCrc(result);
+}
+
 export function componentsForFormat(profileFormatId: number): ComponentSpec[] {
   const components = profileFormatId >= 6 ? [...COMPONENTS_V6] : [...COMPONENTS_V1];
   if (profileFormatId >= 7) components.push(BUNNY_HOPPING);
@@ -782,6 +881,34 @@ function decodeLegacyReportRate(bytes: Uint8Array, offset: number | null): numbe
   if (intervalMs === undefined || intervalMs === 0xff || intervalMs === 0) return null;
   const hz = 1000 / intervalMs;
   return Number.isInteger(hz) ? hz : null;
+}
+
+/**
+ * USB transport ids (from the mouse's own HID++ identity, so they hold whether
+ * it is on the cable, on its receiver or on Bluetooth) whose cable carries the
+ * full report-rate range instead of the 1 kHz the rest of the format is capped
+ * at. The cap belongs to a product's USB interface, not to its profile format:
+ * the PRO X 2 Superstrike (C0A8) and PRO X 3 Superstrike (C0A9) share format 8,
+ * but a PRO X 3 diagnostic taken on the cable shows its 0x8061 feature
+ * advertising all seven rates through 8000 Hz (mask 0x7f) - the same mask it
+ * reports wirelessly - and G HUB offers 8 kHz on the cable. The PRO X 2's
+ * cable stays at its captured 1 kHz until it shows the same.
+ */
+const FULL_RATE_USB_TRANSPORT_IDS: ReadonlySet<string> = new Set(["C0A9"]);
+
+/**
+ * The report-rate ceilings for a mouse: the format's, with the cable lifted to
+ * the wireless ceiling for a product known to run the full range over USB.
+ */
+export function reportRateCapabilitiesFor(
+  profileFormatId: number | null | undefined,
+  usbTransportId: string | null | undefined,
+): ReportRateCapabilities | null {
+  const capabilities = capabilitiesForFormat(profileFormatId).reportRates;
+  if (!capabilities || !usbTransportId || !FULL_RATE_USB_TRANSPORT_IDS.has(usbTransportId.toUpperCase())) {
+    return capabilities;
+  }
+  return { ...capabilities, wiredMaxHz: capabilities.wirelessMaxHz };
 }
 
 /** Rates the byte can index, filtered to the ceiling for that connection. */

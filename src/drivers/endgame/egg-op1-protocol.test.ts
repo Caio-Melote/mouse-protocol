@@ -23,10 +23,10 @@ const op1 = EGG_DEVICE_PROFILES.get(0x1964)!;
 const purple = EGG_DEVICE_PROFILES.get(0x1976)!;
 const op1v2 = EGG_DEVICE_PROFILES.get(0x1978)!;
 
-test("all seven Endgame Gear 8K devices have explicit capability profiles", () => {
+test("all eight Endgame Gear OP1-protocol devices have explicit capability profiles", () => {
   assert.deepEqual(
     [...EGG_DEVICE_PROFILES.keys()],
-    [0x1964, 0x1966, 0x1976, 0x1978, 0x1980, 0x1984, 0x1970],
+    [0x1964, 0x1966, 0x1976, 0x1978, 0x1980, 0x1984, 0x1982, 0x1970],
   );
   assert.equal(op1.motionSyncAt8k, false);
   assert.equal(EGG_DEVICE_PROFILES.get(0x1966)!.motionSyncAt8k, false);
@@ -38,17 +38,16 @@ test("OP1w 4K v2 wireless models are capped at 4000 Hz while wired 8K models kee
   assert.equal(op1.maxPollingHz, 8000);
   assert.equal(op1v2.maxPollingHz, 8000);
   assert.equal(EGG_DEVICE_PROFILES.get(0x1984)!.maxPollingHz, 4000);
+  assert.equal(EGG_DEVICE_PROFILES.get(0x1982)!.maxPollingHz, 4000);
   assert.equal(EGG_DEVICE_PROFILES.get(0x1970)!.maxPollingHz, 4000);
 });
 
-test("the shared 4K v2 dongle PIDs report a neutral OP1w/XM2w name, since WebHID has no way to tell them apart", () => {
-  // Confirmed on real hardware: an XM2w 4K v2 reports device.productName as
-  // "Endgame Gear OP1we" — the receiver's fixed USB descriptor string, the
-  // same regardless of which mouse is actually paired. There is no signal
-  // available to resolve this to one specific model, so the name says both
-  // rather than confidently claiming the wrong one.
+test("cabled 4K v2 PIDs name their model; the shared dongle stays neutral until the mouse reports its PID", () => {
+  // An XM2w 4K v2 behind the dongle reports the receiver's fixed USB name
+  // (confirmed on hardware), so 0x1970 alone cannot say which mouse is paired.
+  assert.equal(eggProfileForPid(0x1984).name, "Endgame Gear OP1w 4K v2");
+  assert.equal(eggProfileForPid(0x1982).name, "Endgame Gear XM2w 4K v2");
   assert.equal(eggProfileForPid(0x1970).name, "Endgame Gear OP1w/XM2w 4K v2");
-  assert.equal(eggProfileForPid(0x1984).name, "Endgame Gear OP1w/XM2w 4K v2");
 });
 
 test("CPI ranges and quantization follow each sensor generation", () => {

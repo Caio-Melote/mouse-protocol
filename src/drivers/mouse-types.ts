@@ -153,7 +153,7 @@ export interface AtkReceiverInfo {
 }
 
 export interface MouseStatus {
-  brand: "RAWM" | "Logitech" | "Pulsar" | "Endgame Gear" | "WLMouse" | "G-Wolves" | "Lamzu" | "CRDRAKO" | "Attack Shark" | "Orbital" | "Razer" | "Teevolution" | "ATK" | "VXE" | "VGN" | "VAXEE" | "Finalmouse" | "Keychron" | "moddoMOUSE" | "Ninjutso" | "Zaunkoenig" | "Fantech" | "Wooting" | "WALLHACK" | "SteelSeries" | "Glorious" | "MCHOSE" | "K-snake" | "Noir Gear" | "Lingbao" | "GearHub" | "Corsair" | "Microsoft" | "Dareu" | "Redragon" | "Incott" | "HyperX" | "ASUS" | "Ryunix" | "Delux";
+  brand: "RAWM" | "Motospeed" | "Logitech" | "Pulsar" | "Endgame Gear" | "WLMouse" | "G-Wolves" | "Lamzu" | "CRDRAKO" | "Attack Shark" | "Orbital" | "Razer" | "Teevolution" | "ATK" | "VXE" | "VGN" | "VAXEE" | "Finalmouse" | "Keychron" | "moddoMOUSE" | "Ninjutso" | "Zaunkoenig" | "Fantech" | "Wooting" | "WALLHACK" | "SteelSeries" | "Glorious" | "MCHOSE" | "K-snake" | "Noir Gear" | "Lingbao" | "GearHub" | "Corsair" | "Microsoft" | "Dareu" | "Redragon" | "Incott" | "HyperX" | "ASUS" | "Ryunix" | "Delux" | "GravaStar" | "IPI";
   name: string;
   /** Driver-supplied UI policy (optional; keeps control.ts brand-agnostic). */
   ui?: MouseUiHints;
@@ -168,7 +168,13 @@ export interface MouseStatus {
     maxActuation: number;
     maxRapidTrigger: number;
     maxHaptics: number;
-    buttons: Array<{ actuation: number; rapidTrigger: number; haptics: number }>;
+    buttons: Array<{
+      actuation: number;
+      rapidTrigger: number;
+      haptics: number;
+      /** Rapid trigger on/off (bit 0 of its byte). Absent when a driver cannot tell. */
+      rapidTriggerEnabled?: boolean;
+    }>;
   };
   pollingRateHz: number;
   supportedPollingRates?: number[];
@@ -277,6 +283,8 @@ export interface MouseStatus {
   eggPollingDivider?: number;
   eggMulticlickFilters?: number[];
   eggButtonMappings?: string[];
+  eggGlassMode?: boolean;
+  eggSupportsGlassMode?: boolean;
   /**
    * Every shipped Razer control's current state, keyed by control name — the
    * four cross-assignable `RazerButtonControl`s and the three two-state

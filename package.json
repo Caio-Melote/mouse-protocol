@@ -21,6 +21,10 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./bytech": {
+      "types": "./dist/bytech/index.d.ts",
+      "import": "./dist/bytech/index.js"
+    },
     "./atk": {
       "types": "./dist/atk/index.d.ts",
       "import": "./dist/atk/index.js"
@@ -68,6 +72,10 @@
     "./microsoft": {
       "types": "./dist/microsoft/index.d.ts",
       "import": "./dist/microsoft/index.js"
+    },
+    "./motospeed": {
+      "types": "./dist/motospeed/index.d.ts",
+      "import": "./dist/motospeed/index.js"
     },
     "./moddo": {
       "types": "./dist/moddo/index.d.ts",

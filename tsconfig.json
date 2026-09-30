@@ -30,6 +30,7 @@
       "@openmouse/protocol/lamzu": ["./src/lamzu/index.ts"],
       "@openmouse/protocol/logitech": ["./src/logitech/index.ts"],
       "@openmouse/protocol/microsoft": ["./src/microsoft/index.ts"],
+      "@openmouse/protocol/motospeed": ["./src/motospeed/index.ts"],
       "@openmouse/protocol/mchose": ["./src/mchose/index.ts"],
       "@openmouse/protocol/moddo": ["./src/moddo/index.ts"],
       "@openmouse/protocol/orbital": ["./src/orbital/index.ts"],
@@ -45,7 +46,8 @@
       "@openmouse/protocol/wooting": ["./src/wooting/index.ts"],
       "@openmouse/protocol/zaunkoenig": ["./src/zaunkoenig/index.ts"],
       "@openmouse/protocol/corsair": ["./src/corsair/index.ts"],
-      "@openmouse/protocol/delux": ["./src/delux/index.ts"]
+      "@openmouse/protocol/delux": ["./src/delux/index.ts"],
+      "@openmouse/protocol/bytech": ["./src/bytech/index.ts"]
     }
   },
   "include": ["src/**/*"],

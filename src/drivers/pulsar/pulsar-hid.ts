@@ -15,7 +15,13 @@ import {
   pulsarVgnDpiOptions,
   pulsarVgnEncodeDpi,
 } from "@openmouse/protocol/pulsar";
+import {
+  TEEVOLUTION_SHARED_BUTTON_OPTIONS,
+  teevolutionDecodeButtonMappings,
+  teevolutionRemapButton,
+} from "@openmouse/protocol/teevolution";
 import { ATK_COMPX_PRODUCT_IDS } from "../atk/products.ts";
+import { GRAVASTAR_PRODUCT_IDS } from "../gravastar/products.ts";
 import { LAMZU_ATLANTIS_PRODUCTS } from "@openmouse/protocol/lamzu";
 
 // The Pulsar 4K Wireless Receiver is sold as a Pulsar product but enumerates
@@ -29,6 +35,7 @@ const CLAIMED_VGN_PRODUCT_IDS: ReadonlySet<number> = new Set([
   0xfb56, 0xfb57, // VGN Dragonfly F2 Master+
   ...ATK_COMPX_PRODUCT_IDS, // VXE wired units
   ...LAMZU_ATLANTIS_PRODUCTS.keys(), // Lamzu Atlantis generation
+  ...GRAVASTAR_PRODUCT_IDS, // GravaStarHidClient, a subclass of this client
 ]);
 const PULSAR_POLLING_RATES = [125, 250, 500, 1000, 2000, 4000, 8000];
 
@@ -48,7 +55,7 @@ export interface PulsarDeviceInfo {
 }
 
 export class PulsarHidClient {
-  private deviceInfo: PulsarDeviceInfo | null = null;
+  protected deviceInfo: PulsarDeviceInfo | null = null;
   private reportListener: ((report: PulsarReport) => void) | null = null;
   private responseWaiter: {
     command: number;
@@ -61,7 +68,7 @@ export class PulsarHidClient {
       event.data.buffer.slice(event.data.byteOffset, event.data.byteOffset + event.data.byteLength),
     );
     this.reportListener?.({ timestamp: Date.now(), reportId: event.reportId, bytes: [...bytes] });
-    if (event.reportId === CONFIG_REPORT_ID && bytes[0] === this.responseWaiter?.command) {
+    if (event.reportId === this.responseReportId && bytes[0] === this.responseWaiter?.command) {
       const waiter = this.responseWaiter;
       this.responseWaiter = null;
       waiter.resolve(bytes);
@@ -69,6 +76,8 @@ export class PulsarHidClient {
   };
 
   readonly device: HIDDevice;
+  /** Input report the mouse answers on; the Areson-USB X2 answers on 9. */
+  protected readonly responseReportId: number = CONFIG_REPORT_ID;
 
   constructor(device: HIDDevice) {
     this.device = device;
@@ -77,12 +86,15 @@ export class PulsarHidClient {
   static isSupported(device: HIDDevice): boolean {
     const vendorSupported = device.vendorId === PULSAR_VENDOR_ID
       || (device.vendorId === VGN_VENDOR_ID && !CLAIMED_VGN_PRODUCT_IDS.has(device.productId));
-    return vendorSupported
-      && device.collections.some((collection) =>
-        collection.inputReports.length === 1
-        && collection.outputReports.length === 1
-        && collection.inputReports[0].reportId === CONFIG_REPORT_ID
-        && collection.outputReports[0].reportId === CONFIG_REPORT_ID);
+    return vendorSupported && PulsarHidClient.hasConfigCollection(device);
+  }
+
+  protected static hasConfigCollection(device: HIDDevice): boolean {
+    return device.collections.some((collection) =>
+      collection.inputReports.length === 1
+      && collection.outputReports.length === 1
+      && collection.inputReports[0].reportId === CONFIG_REPORT_ID
+      && collection.outputReports[0].reportId === CONFIG_REPORT_ID);
   }
 
   async open(onReport?: (report: PulsarReport) => void): Promise<void> {
@@ -129,7 +141,7 @@ export class PulsarHidClient {
     return await this.withDeviceControl(async () => {
       const flash = await this.readFlash(FLASH.reportRate, FLASH.performanceTime + 2);
       const battery = await this.query(COMMAND.batteryLevel);
-      const deviceVersion = await this.query(COMMAND.readVersionId);
+      const deviceVersion = await this.query(COMMAND.readVersionId).catch(() => null);
       const dongleVersion = await this.query(COMMAND.getDongleVersion).catch(() => null);
       const profile = await this.query(COMMAND.getCurrentConfig).catch(() => null);
       const dongleLed = [0, 3].includes(info.dongleType)
@@ -159,6 +171,8 @@ export class PulsarHidClient {
         rippleControl: flash[FLASH.rippleControl] === 1,
         performanceMode: flash[FLASH.performanceState] === 1,
         liftOffDistance: lodValue === 3 ? "Low" : lodValue === 1 ? "Medium" : lodValue === 2 ? "High" : null,
+        buttonMappings: teevolutionDecodeButtonMappings(flash),
+        buttonOptions: TEEVOLUTION_SHARED_BUTTON_OPTIONS,
         firmware: [
           this.decodeVersionOptional("Mouse", deviceVersion) ?? "Mouse firmware unavailable",
           this.decodeVersionOptional("Dongle", dongleVersion) ?? "Dongle firmware unavailable",
@@ -177,15 +191,15 @@ export class PulsarHidClient {
    * mice (including the X2 CrazyLight). Branch on vendor id, not CID/MID —
    * those are Pulsar-internal identifiers this receiver family reuses.
    */
-  private isVgnReceiver(): boolean {
+  protected isVgnReceiver(): boolean {
     return this.device.vendorId === VGN_VENDOR_ID;
   }
 
-  private encodeDpi(dpi: number): Uint8Array {
+  protected encodeDpi(dpi: number): Uint8Array {
     return this.isVgnReceiver() ? pulsarVgnEncodeDpi(dpi) : pulsarEncodeDpi(dpi);
   }
 
-  private decodeDpi(data: Uint8Array): number | null {
+  protected decodeDpi(data: Uint8Array): number | null {
     return this.isVgnReceiver() ? pulsarVgnDecodeDpi(data) : pulsarDecodeDpi(data);
   }
 
@@ -259,6 +273,10 @@ export class PulsarHidClient {
     return await this.setVerifiedBoolean(FLASH.performanceState, enabled, "performance mode");
   }
 
+  getDebounceOptions(): number[] {
+    return Array.from({ length: 16 }, (_, ms) => ms);
+  }
+
   async setDebounceTime(debounceMs: number): Promise<number> {
     if (!Number.isInteger(debounceMs) || debounceMs < 0 || debounceMs > 15) {
       throw new Error("This Pulsar model supports a debounce time from 0 to 15 ms.");
@@ -280,6 +298,24 @@ export class PulsarHidClient {
       }
       return sleepConfirmed;
     });
+  }
+
+  /**
+   * The key table sits where Teevolution's does (six 4-byte records from 96),
+   * inside the flash range readStatus already reads, so buttonMappings costs
+   * no extra reads.
+   *
+   * ponytail: G-Wolves' web driver writes this exact table on the same
+   * reference firmware, but nobody has captured Pulsar Fusion doing it yet.
+   */
+  async setButtonMapping(button: string, action: string): Promise<void> {
+    await this.withDeviceControl(() => teevolutionRemapButton(
+      (address, length) => this.readFlash(address, length),
+      (address, data) => this.writeFlash(address, data),
+      button,
+      action,
+      { actions: TEEVOLUTION_SHARED_BUTTON_OPTIONS },
+    ));
   }
 
   async close(): Promise<void> {
@@ -348,7 +384,7 @@ export class PulsarHidClient {
     await this.writeFlash(address, new Uint8Array([value, (0x55 - value) & 0xff]));
   }
 
-  private async setVerifiedByte(address: number, value: number, label: string): Promise<number> {
+  protected async setVerifiedByte(address: number, value: number, label: string): Promise<number> {
     return await this.withDeviceControl(async () => {
       await this.writeCheckedByte(address, value);
       const confirmed = (await this.readFlash(address, 2))[0];
@@ -409,13 +445,17 @@ export class PulsarHidClient {
     });
     void response.catch(() => undefined);
     try {
-      await this.device.sendReport(CONFIG_REPORT_ID, packet);
+      await this.sendPacket(packet);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       (rejectResponse as ((reason: Error) => void) | null)?.(new Error(`Chrome could not write Pulsar report 8. ${detail}`));
       this.responseWaiter = null;
     }
     return await response;
+  }
+
+  protected async sendPacket(packet: Uint8Array<ArrayBuffer>): Promise<void> {
+    await this.device.sendReport(CONFIG_REPORT_ID, packet);
   }
 
   private createPacket(command: number): Uint8Array<ArrayBuffer> {

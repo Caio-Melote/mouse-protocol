@@ -30,6 +30,7 @@ import {
   LOGITECH_HIRES_WHEEL_BIT,
   LOGITECH_HOSTS,
   LOGITECH_SMART_SHIFT,
+  LOGITECH_SMART_SHIFT_LEGACY,
   LOGITECH_SMART_SHIFT_OFF,
   LOGITECH_THUMB_WHEEL,
   buildFriendlyNameWrite,
@@ -99,6 +100,7 @@ import {
   isProfileWritable,
   isLodWritableForProduct,
   encodeDpiStages,
+  encodeAnalogButtons,
   encodeButtonAssignment,
   encodeMacroButtonAssignment,
   encodeMacroSector,
@@ -114,6 +116,7 @@ import {
   parseDirectory,
   parseProfilesInfo,
   profileCrc,
+  reportRateCapabilitiesFor,
   reportRatesForDevice,
   setDirectoryEnabled,
   storedCrc,
@@ -316,6 +319,7 @@ const FEATURE = {
   analogButtons: 0x1b0c,
   haptic: 0x19b0,
   smartShift: 0x2111,
+  smartShiftLegacy: 0x2110,
   hiresWheel: 0x2121,
   thumbWheel: 0x2150,
   friendlyName: 0x0007,
@@ -363,6 +367,29 @@ export function isWiredHidppConnection(
   return directIndex;
 }
 
+/**
+ * The connection wording the shell shows, or undefined for its default
+ * "2.4 GHz receiver" text.
+ *
+ * Usage page 0xFF43 is Bluetooth's HID++ page, but newer USB mice (the PRO X 3
+ * Superstrike, on its cable and on its Lightspeed receiver) put their USB
+ * interface there too, so the page alone cannot say "Bluetooth". A product id
+ * that is a known receiver or wired mouse is USB whatever page it uses. Only
+ * the label follows this; the transport paths still key off isBluetooth.
+ */
+export function connectionDetailFor(connection: {
+  wired: boolean;
+  directConnect: boolean;
+  bluetoothPage: boolean;
+  knownUsbProduct: boolean;
+  boltReceiver: boolean;
+}): string | undefined {
+  if (connection.wired || connection.directConnect) return "Wired USB";
+  if (connection.bluetoothPage && !connection.knownUsbProduct) return "Bluetooth";
+  if (connection.boltReceiver) return "Logi Bolt";
+  return undefined;
+}
+
 interface BatteryReading {
   percent: number | null;
   state: LogitechMouseStatus["batteryState"];
@@ -390,7 +417,7 @@ interface AnalogButtonTuning {
   maxActuation: number;
   maxRapidTrigger: number;
   maxHaptics: number;
-  buttons: Array<{ actuation: number; rapidTrigger: number; haptics: number }>;
+  buttons: Array<{ actuation: number; rapidTrigger: number; haptics: number; rapidTriggerEnabled: boolean }>;
 }
 
 interface DeviceIdentity {
@@ -404,6 +431,8 @@ export class LogitechHidppClient {
   private dpiFeatureResolved: ResolvedFeature | null = null;
   private rateFeatureResolved: ResolvedFeature | null = null;
   private reportRateFeatureIndex: number | null = null;
+  private analogButtonsFeatureIndex: number | null = null;
+  private readonly analogPressListeners = new Set<(left: number, right: number) => void>();
   private supportedPollingRatesCache: number[] | null = null;
   private livePollingRateHz: number | null = null;
   /** Discovered by resolveDeviceIndex; null until the mouse has answered. */
@@ -411,6 +440,8 @@ export class LogitechHidppClient {
   /** Last format read from 0x8100, so a refusal can name it. */
   private profileFormatId: number | null = null;
   private wiredConnection = false;
+  /** The mouse's own reported USB transport id; keys per-product cable limits. */
+  private usbTransportId: string | null = null;
   /** Lift-off levels this device advertised; the single source of truth for both UI and validation. */
   private lodCapabilities: ProfileFormatCapabilities = capabilitiesForFormat(null);
   private supportedLods: Array<NonNullable<LogitechMouseStatus["liftOffDistance"]>> = ["Medium", "High"];
@@ -440,6 +471,10 @@ export class LogitechHidppClient {
         this.rateChangeWaiters.splice(0, this.rateChangeWaiters.length, ...this.rateChangeWaiters.filter((waiter) => waiter.rate !== rate));
         matchingRateWaiters.forEach((waiter) => waiter.resolve());
       }
+    }
+    // HITS pushes the live press depth of each button (0..10) as event 0 while one is held.
+    if (report[0] === this.deviceIndex && report[1] === this.analogButtonsFeatureIndex && report[2] === 0x00) {
+      this.analogPressListeners.forEach((listener) => listener(report[3] ?? 0, report[4] ?? 0));
     }
     const matchingIndex = this.waiters.findIndex(
       (waiter) => report[0] === this.deviceIndex
@@ -766,6 +801,11 @@ export class LogitechHidppClient {
     this.supportedLods = [...this.lodCapabilities.supportedLods];
     const wired = isWiredHidppConnection(this.device.productId, identity.transportIds, this.isDirectConnect);
     this.wiredConnection = wired;
+    this.usbTransportId = identity.transportIds.USB ?? null;
+    this.lodCapabilities = {
+      ...this.lodCapabilities,
+      reportRates: reportRateCapabilitiesFor(onboardProfileFormat?.id, this.usbTransportId),
+    };
     // A direct-connect mouse keeps its rate in the onboard profile, so it can
     // only change once that format is verified and actually carries a
     // report-rate field. Anything else stays read-only.
@@ -856,13 +896,14 @@ export class LogitechHidppClient {
       // Without this the shell falls back to its "2.4 GHz receiver" wording,
       // which is wrong for a mouse plugged straight into USB, and imprecise
       // for Logi Bolt (BLE-based) versus Lightspeed.
-      connectionDetail: this.isDirectConnect
-        ? "Wired USB"
-        : this.isBluetooth
-          ? "Bluetooth"
-          : this.isBoltReceiver
-            ? "Logi Bolt"
-            : undefined,
+      connectionDetail: connectionDetailFor({
+        wired,
+        directConnect: this.isDirectConnect,
+        bluetoothPage: this.isBluetooth,
+        knownUsbProduct: KNOWN_RECEIVER_PRODUCT_IDS.has(this.device.productId)
+          || isDirectConnectProduct(this.device.productId),
+        boltReceiver: this.isBoltReceiver,
+      }),
       activeProfile: profileState.activeProfile,
       deviceMode: profileState.deviceMode,
       unitId: identity.unitId,
@@ -1184,7 +1225,15 @@ export class LogitechHidppClient {
     return result;
   }
 
-  async setAnalogButtonTuning(button: 0 | 1, tuning: { actuation: number; rapidTrigger: number; haptics: number }): Promise<void> {
+  /**
+   * `rapidTriggerEnabled` switches rapid trigger on or off (the toggle G HUB
+   * labels "Schnellauslöser aktivieren"); left out, the button's current state
+   * is kept.
+   */
+  async setAnalogButtonTuning(
+    button: 0 | 1,
+    tuning: { actuation: number; rapidTrigger: number; haptics: number; rapidTriggerEnabled?: boolean },
+  ): Promise<void> {
     const feature = await this.getFeature(FEATURE.analogButtons);
     if (!feature.index) {
       throw new Error("This Logitech mouse does not expose hall-effect button tuning.");
@@ -1194,25 +1243,99 @@ export class LogitechHidppClient {
     if (!capabilities) {
       throw new Error("This mouse does not expose tuning for that button.");
     }
-    if (!Number.isInteger(tuning.actuation) || tuning.actuation < 1 || tuning.actuation > current.maxActuation
-      || !Number.isInteger(tuning.rapidTrigger) || tuning.rapidTrigger < 1 || tuning.rapidTrigger > current.maxRapidTrigger
-      || !Number.isInteger(tuning.haptics) || tuning.haptics < 0 || tuning.haptics > current.maxHaptics) {
-      throw new Error("One or more hall-effect button values are outside the mouse's supported range.");
-    }
-    // HID++ 0x1B0C stores logical values in bits 7..2. Bit 0 of rapid trigger
-    // is a firmware-managed sensitivity flag, so it must survive the write.
+    this.assertAnalogTuningInRange(current, tuning);
+    // HID++ 0x1B0C stores logical values in bits 7..2. In the rapid-trigger byte,
+    // bit 0 is the on/off switch: G HUB's toggle flips it (0x08 off, 0x09 on at
+    // sensitivity 2, captured from a PRO X 3 Superstrike). A write that does not
+    // name a state keeps the current one.
     const currentWire = await this.request(feature.index, 0x20, button);
+    const enabledBit = tuning.rapidTriggerEnabled === undefined
+      ? (currentWire[5] ?? 0) & 0x01
+      : tuning.rapidTriggerEnabled ? 1 : 0;
     await this.requestLong(feature.index, 0x10, [
       button,
       tuning.actuation << 2,
-      (tuning.rapidTrigger << 2) | ((currentWire[5] ?? 0) & 0x01),
+      (tuning.rapidTrigger << 2) | enabledBit,
       tuning.haptics << 2,
     ]);
     const confirmed = await this.readAnalogButtonTuning(feature.index);
     const result = confirmed.buttons[button];
-    if (!result || result.actuation !== tuning.actuation || result.rapidTrigger !== tuning.rapidTrigger || result.haptics !== tuning.haptics) {
+    if (!result || result.actuation !== tuning.actuation || result.rapidTrigger !== tuning.rapidTrigger || result.haptics !== tuning.haptics
+      || (tuning.rapidTriggerEnabled !== undefined && result.rapidTriggerEnabled !== tuning.rapidTriggerEnabled)) {
       throw new Error("The mouse did not confirm the hall-effect button settings.");
     }
+  }
+
+  /**
+   * Live press depth of the left and right button, 0 (released) to 10 (fully
+   * down). The mouse only streams it while G HUB's HITS page is open.
+   * Returns the unsubscribe.
+   */
+  onAnalogPress(listener: (left: number, right: number) => void): () => void {
+    this.analogPressListeners.add(listener);
+    return () => this.analogPressListeners.delete(listener);
+  }
+
+  /**
+   * Arms the live press-depth stream: the mouse only sends onAnalogPress
+   * events while this is on, otherwise it stays silent even for hardware
+   * presses. Captured from G HUB's HITS test page, which sends [0x01, 0x3c,
+   * 0x00] on function 3 when the page opens. The 0x3c meaning is unconfirmed
+   * (maybe a timeout in seconds); it is replayed as G HUB sent it.
+   */
+  async startAnalogPressStream(): Promise<void> {
+    const feature = await this.getFeature(FEATURE.analogButtons);
+    if (!feature.index) throw new Error("This Logitech mouse does not expose hall-effect button tuning.");
+    await this.request(feature.index, 0x30, 0x01, 0x3c, 0x00);
+  }
+
+  /**
+   * Disarms the stream. G HUB's page close was not captured, so this sends
+   * the same function with the enable byte cleared, the natural inverse of
+   * startAnalogPressStream.
+   */
+  async stopAnalogPressStream(): Promise<void> {
+    const feature = await this.getFeature(FEATURE.analogButtons);
+    if (!feature.index) return;
+    await this.request(feature.index, 0x30, 0x00, 0x00, 0x00).catch(() => undefined);
+  }
+
+  private assertAnalogTuningInRange(
+    limits: { maxActuation: number; maxRapidTrigger: number; maxHaptics: number },
+    tuning: { actuation: number; rapidTrigger: number; haptics: number },
+  ): void {
+    if (!Number.isInteger(tuning.actuation) || tuning.actuation < 1 || tuning.actuation > limits.maxActuation
+      || !Number.isInteger(tuning.rapidTrigger) || tuning.rapidTrigger < 1 || tuning.rapidTrigger > limits.maxRapidTrigger
+      || !Number.isInteger(tuning.haptics) || tuning.haptics < 0 || tuning.haptics > limits.maxHaptics) {
+      throw new Error("One or more hall-effect button values are outside the mouse's supported range.");
+    }
+  }
+
+  /**
+   * Saves HITS settings into the running profile, where the mouse reloads them
+   * at power-on. setAnalogButtonTuning alone only changes the working values,
+   * which a power cycle discards. Call it after the live write, with the same
+   * values, so both copies agree; both buttons go into one sector write.
+   */
+  async persistAnalogButtonTuning(
+    buttons: ReadonlyArray<{
+      button: 0 | 1;
+      actuation: number;
+      rapidTrigger: number;
+      haptics: number;
+      rapidTriggerEnabled?: boolean;
+    }>,
+  ): Promise<void> {
+    const feature = await this.getFeature(FEATURE.analogButtons);
+    if (!feature.index) {
+      throw new Error("This Logitech mouse does not expose hall-effect button tuning.");
+    }
+    const current = await this.readAnalogButtonTuning(feature.index);
+    for (const entry of buttons) {
+      if (!current.buttons[entry.button]) throw new Error("This mouse does not expose tuning for that button.");
+      this.assertAnalogTuningInRange(current, entry);
+    }
+    await this.writeActiveProfile({ analogButtons: buttons });
   }
 
   /**
@@ -1425,6 +1548,13 @@ export class LogitechHidppClient {
     name?: string | null;
     buttonAssignments?: Array<{ layer: "primary" | "g-shift"; button: number; binding: LogitechButtonAction | LogitechButtonBinding }>;
     buttonMacros?: Array<{ layer: "primary" | "g-shift"; button: number; steps: LogitechMacroStep[] }>;
+    analogButtons?: ReadonlyArray<{
+      button: 0 | 1;
+      actuation: number;
+      rapidTrigger: number;
+      haptics: number;
+      rapidTriggerEnabled?: boolean;
+    }>;
     /** Defaults to the running profile when omitted. */
     sector?: number;
   }): Promise<void> {
@@ -1510,7 +1640,7 @@ export class LogitechHidppClient {
     if (values.reportRateWirelessHz) {
       const liveRates = await this.getSupportedPollingRateOptions();
       const allowed = reportRatesForDevice(
-        capabilitiesForFormat(formatId).reportRates,
+        reportRateCapabilitiesFor(formatId, this.usbTransportId),
         "wireless",
         liveRates,
         this.wiredConnection ? "wired" : "wireless",
@@ -1519,12 +1649,18 @@ export class LogitechHidppClient {
       if (!allowed.includes(values.reportRateWirelessHz)) {
         throw new Error("The connected mouse did not advertise that profile report rate.");
       }
-      updated = encodeReportRate(updated, formatId, "wireless", values.reportRateWirelessHz);
+      updated = encodeReportRate(
+        updated,
+        formatId,
+        "wireless",
+        values.reportRateWirelessHz,
+        reportRateCapabilitiesFor(formatId, this.usbTransportId),
+      );
     }
     if (values.reportRateWiredHz) {
       const liveRates = await this.getSupportedPollingRateOptions();
       const allowed = reportRatesForDevice(
-        capabilitiesForFormat(formatId).reportRates,
+        reportRateCapabilitiesFor(formatId, this.usbTransportId),
         "wired",
         liveRates,
         this.wiredConnection ? "wired" : "wireless",
@@ -1533,7 +1669,13 @@ export class LogitechHidppClient {
       if (!allowed.includes(values.reportRateWiredHz)) {
         throw new Error("The connected mouse did not advertise that profile report rate.");
       }
-      updated = encodeReportRate(updated, formatId, "wired", values.reportRateWiredHz);
+      updated = encodeReportRate(
+        updated,
+        formatId,
+        "wired",
+        values.reportRateWiredHz,
+        reportRateCapabilitiesFor(formatId, this.usbTransportId),
+      );
     }
 
     if (values.name !== null && values.name !== undefined) {
@@ -1541,6 +1683,9 @@ export class LogitechHidppClient {
     }
     for (const assignment of values.buttonAssignments ?? []) {
       updated = encodeButtonAssignment(updated, formatId, assignment.layer, assignment.button, assignment.binding);
+    }
+    if (values.analogButtons?.length) {
+      updated = encodeAnalogButtons(updated, formatId, values.analogButtons);
     }
 
     applyCrc(updated);
@@ -2127,9 +2272,9 @@ export class LogitechHidppClient {
   }
 
   /**
-   * Scroll-wheel state across 0x2111, 0x2121 and 0x2150. Every field stays
-   * absent rather than guessed when its feature is missing, so a mouse
-   * without a thumb wheel does not get a control that can only fail.
+   * Scroll-wheel state across 0x2111 (or 0x2110), 0x2121 and 0x2150. Every
+   * field stays absent rather than guessed when its feature is missing, so a
+   * mouse without a thumb wheel does not get a control that can only fail.
    */
   private async readWheelState(): Promise<{
     wheelMode: LogitechWheelMode | null;
@@ -2141,9 +2286,9 @@ export class LogitechHidppClient {
     thumbWheelInverted: boolean | null;
     supportsThumbWheelInvert: boolean;
   }> {
-    const smartShift = await this.getFeature(FEATURE.smartShift);
+    const smartShift = await this.getSmartShift();
     const ratchetReply = smartShift.index
-      ? await this.request(smartShift.index, LOGITECH_SMART_SHIFT.get).catch(() => null)
+      ? await this.request(smartShift.index, smartShift.get).catch(() => null)
       : null;
     const ratchet = ratchetReply ? decodeRatchetControl(ratchetReply.slice(3)) : null;
 
@@ -2207,23 +2352,29 @@ export class LogitechHidppClient {
     return { thumbWheelInverted: decoded?.inverted ?? null, supportsThumbWheelInvert: supports };
   }
 
-  /** 0x2111 carries all three bytes, so each setter changes only its field. */
+  /** 0x2111, else the older 0x2110: same trio, different function numbers. */
+  private async getSmartShift(): Promise<{ index: number; get: number; set: number }> {
+    const enhanced = await this.getFeature(FEATURE.smartShift);
+    if (enhanced.index) return { index: enhanced.index, ...LOGITECH_SMART_SHIFT };
+    const legacy = await this.getFeature(FEATURE.smartShiftLegacy);
+    return { index: legacy.index, ...LOGITECH_SMART_SHIFT_LEGACY };
+  }
+
+  /** The write carries all three bytes, so each setter changes only its field. */
   private async writeRatchetControl(
     change: { mode?: LogitechWheelMode; threshold?: number },
   ): Promise<LogitechRatchetControl> {
-    const feature = await this.getFeature(FEATURE.smartShift);
+    const feature = await this.getSmartShift();
     if (!feature.index) throw new Error("This mouse has no SmartShift feature.");
 
-    const current = decodeRatchetControl((await this.request(feature.index, LOGITECH_SMART_SHIFT.get)).slice(3));
+    const current = decodeRatchetControl((await this.request(feature.index, feature.get)).slice(3));
     if (!current) throw new Error("The mouse gave no answer when its wheel settings were read.");
 
-    const reply = await this.request(
-      feature.index,
-      LOGITECH_SMART_SHIFT.set,
-      ...buildRatchetControlWrite(current, change),
-    );
-    const confirmed = decodeRatchetControl(reply.slice(3));
-    if (!confirmed) throw new Error("The mouse gave no answer to the wheel write.");
+    await this.request(feature.index, feature.set, ...buildRatchetControlWrite(current, change));
+    // Confirmed by reading back: 0x2110 is not proven to echo the write, and a
+    // zero-padded reply would decode as a real (wrong) state, as 0x2150 did.
+    const confirmed = decodeRatchetControl((await this.request(feature.index, feature.get)).slice(3));
+    if (!confirmed) throw new Error("The mouse gave no answer when its wheel settings were read back.");
     return confirmed;
   }
 
@@ -2847,6 +2998,7 @@ export class LogitechHidppClient {
     const reply = await this.request(0x00, 0x00, featureId >> 8, featureId & 0xff);
     const feature = { index: reply[3] ?? 0, version: reply[6] ?? 0 };
     if (featureId === FEATURE.extendedReportRate) this.reportRateFeatureIndex = feature.index;
+    if (featureId === FEATURE.analogButtons && feature.index) this.analogButtonsFeatureIndex = feature.index;
     return feature;
   }
 
@@ -2973,6 +3125,7 @@ export class LogitechHidppClient {
         actuation: (reply[4] ?? 0) >> 2,
         rapidTrigger: (reply[5] ?? 0) >> 2,
         haptics: (reply[6] ?? 0) >> 2,
+        rapidTriggerEnabled: ((reply[5] ?? 0) & 0x01) === 1,
       });
     }
     return { maxActuation, maxRapidTrigger, maxHaptics, buttons };

@@ -404,9 +404,13 @@ Slot count and DPI range are properties of the mouse, not of the app: an older
 format can hold fewer slots over a much narrower range, and base v1 has no
 stage table at all. `dpiStages` is therefore `null` for every format whose
 numbers were never captured, and the UI hides the slot editor rather than
-borrowing format 7's limits. Format 8 almost certainly holds five slots, since
-it shares the v6 stage table, but its sensor range is unknown — so it is left
-null rather than half-guessed.
+borrowing format 7's limits. Format 8 holds five slots: a PRO X 3 Superstrike
+diagnostic (PRO X 2 identical) decodes its profile sector 1 to five stages
+(800/1200/1600/2400/3200, lift-off byte 2) at the v6 stage table, and the full
+255-byte sector matches its own stored CRC (0x2a38). The storage grid is the
+widest seen, 100-48000 (the X3's 0x2202 list), narrowed at runtime to the
+connected sensor. Format 8 is verified and, as a testing-phase step, writable, including the
+per-stage lift-off byte.
 
 Format 8 is taken to be the Superstrike format because it is the only one
 carrying the analog-button block, which is that mouse's distinguishing feature.
@@ -419,7 +423,11 @@ fact: capture the same G HUB diff on another format before trusting it.
 
 Transport limits stay where they are. The Superstrike's 1 kHz cap over USB is a
 property of that USB interface, not of its profile format, so it is still keyed
-on the product id.
+on the product id - now on the mouse's own reported USB transport id, through
+`reportRateCapabilitiesFor`. The PRO X 3 Superstrike (C0A9) shares format 8 but
+not the cap: on the cable its 0x8061 feature advertises every rate through 8000
+Hz (mask 0x7f, the same as wirelessly), so its cable ceiling is lifted to 8000.
+The PRO X 2 (C0A8) keeps 1 kHz until it shows the same.
 
 ### Per-format additions
 
@@ -699,3 +707,15 @@ but nothing should ever write them in a loop or on a restore path.
 Offsets are format-specific; never apply one format's layout to another. Only
 ship writes for devices tested on real hardware. Decoding and dumping other
 formats is safe; writing on inference is not.
+
+### HITS settings are stored in the profile (format 8)
+
+The HITS tuning feature (0x1B0C) only changes the mouse's working values. What it
+loads at power-on is the profile's `analog_button` block at offset 0x26: one
+three-byte entry per primary button, holding the same bytes the live feature
+uses (`actuation << 2`, `rapid trigger << 2 | on`, `haptics << 2`). Three PRO X 3
+Superstrike captures show it: the stored block read `14 08 0c 14 08 0c` every
+time (actuation 5, sensitivity 2 off, haptics 3) while the live values differed
+and while a live-only apply came back to it after a power cycle. A HITS change
+is therefore written both ways: the live feature for immediate effect, and
+`persistAnalogButtonTuning` for the profile, in one sector write.

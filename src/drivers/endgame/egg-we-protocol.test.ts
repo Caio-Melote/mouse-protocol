@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { EggOp1HidClient } from "./egg-op1-hid.ts";
 import { EggWeHidClient } from "./egg-we-hid.ts";
 
 import {
@@ -50,6 +51,51 @@ test("a 0x1970 receiver exposing the OP1-8K command report is left for EggOp1Hid
 
   const op1w4kV2Dongle = hidDevice(0x1970, "", [0xa1]);
   assert.equal(EggWeHidClient.isSupported(op1w4kV2Dongle), false);
+});
+
+test("a cabled XM2w 4K v2 (0x1982, also an XM2we receiver PID) exposing 0xa1 is left for EggOp1HidClient", () => {
+  assert.equal(EggWeHidClient.isSupported(hidDevice(0x1982, "", [0xa1])), false);
+  assert.equal(EggOp1HidClient.isSupported(hidDevice(0x1982, "", [0xa1])), true);
+  assert.equal(EggWeHidClient.isSupported(hidDevice(0x1982)), true);
+});
+
+test("sibling interfaces of a 4K v2 dongle are not picked as WE (ticket #0126)", () => {
+  const vendorSibling = hidDevice(0x1970, "", [0x05]);
+  assert.deepEqual(EggWeHidClient.pickDevices([hidDevice(0x1970), vendorSibling, hidDevice(0x1970, "", [0xa1])]), []);
+  assert.equal(EggWeHidClient.fromAuthorizedDevices([vendorSibling, hidDevice(0x1970, "", [0xa1])]), null);
+  assert.deepEqual(EggWeHidClient.pickDevices([vendorSibling]), [vendorSibling]);
+});
+
+test("descriptor walks tolerate sparse WebHID collections (openmouse update-protocol)", () => {
+  const sparse = {
+    vendorId: 0x3710,
+    productId: 0x1234,
+    productName: "Example Mouse",
+    collections: [{
+      usagePage: 0xff00,
+      usage: 1,
+      inputReports: [{ reportId: 0x08 }],
+      outputReports: [{ reportId: 0x08 }],
+      featureReports: [],
+    }],
+    opened: false,
+  } as unknown as HIDDevice;
+  assert.equal(EggWeHidClient.isSupported(sparse), false);
+  assert.deepEqual(EggWeHidClient.pickDevices([sparse, sparse]), []);
+
+  const sparseEndgame = {
+    vendorId: 0x3367,
+    productId: 0x1962,
+    productName: "OP1we",
+    collections: [{
+      usagePage: 0xff02,
+      usage: 0,
+      featureReports: [{ reportId: 0x04 }],
+    }],
+    opened: false,
+  } as unknown as HIDDevice;
+  assert.equal(EggWeHidClient.isSupported(sparseEndgame), true);
+  assert.deepEqual(EggWeHidClient.pickDevices([sparse, sparseEndgame]), [sparseEndgame]);
 });
 
 test("WE model names can fall back to the USB product string", () => {

@@ -18,6 +18,7 @@ import {
 } from "@openmouse/protocol/logitech";
 import {
   LogitechHidppClient,
+  connectionDetailFor,
   hasLiftOffControl,
   isPowerOnlyModeStatus,
   isWiredHidppConnection,
@@ -76,6 +77,21 @@ test("the active transport comes from HID++ identity instead of a product except
   assert.equal(isWiredHidppConnection(0x40bd, transports, false), false);
   assert.equal(isWiredHidppConnection(0xc54d, transports, false), false, "receiver PID is not the mouse's USB transport");
   assert.equal(isWiredHidppConnection(0xc07e, {}, true), true, "old direct devices use the probed-index fallback");
+});
+
+test("the PRO X 2 Superstrike's own Lightspeed receiver (0x40bd) is a known receiver", () => {
+  // Confirmed from a user diagnostic: transportIds {Wireless: "40BD", USB: "C0A8"}.
+  // Without this it was misclassified as a direct connection (receiverAttached
+  // false), which picks the wrong device-index candidate set in resolveDeviceIndex.
+  assert.equal(LogitechHidppClient.isKnownReceiver({ vendorId: 0x046d, productId: 0x40bd } as HIDDevice), true);
+  assert.equal(LogitechHidppClient.isKnownReceiver({ vendorId: 0x046d, productId: SUPERSTRIKE_USB } as HIDDevice), true);
+});
+
+test("the receiver seen next to a PRO X 3 Superstrike (0xc54f) is a known receiver", () => {
+  // Unknown, it was probed as a direct connection: that endpoint answers
+  // HID++ with no sensor behind it, so the driver reported "USB Receiver is
+  // not a mouse" instead of looking through the pairing slots for the mouse.
+  assert.equal(LogitechHidppClient.isKnownReceiver({ vendorId: 0x046d, productId: 0xc54f } as HIDDevice), true);
 });
 
 test("receiver probing covers every pairing slot before the direct index", () => {
@@ -327,6 +343,12 @@ async function resolveIndexExcluding(
   return driver.resolvedDeviceIndex;
 }
 
+test("a Unifying receiver's mouse is found past a keyboard paired first", async () => {
+  // Unknown receivers only try 0xFF then 0x01, which latched onto the keyboard.
+  const { client } = harness(0xc52b, { 0x01: "keyboard", 0x03: "mouse" });
+  assert.equal(await resolveIndex(client), 0x03);
+});
+
 test("a merged receiver's mouse is found past the empty first slot", async () => {
   // The G502 X PLUS moves off slot 0x01 once G HUB merges the keyboard in.
   const { client, device } = harness(0xc547, { 0x02: "mouse" });
@@ -410,4 +432,146 @@ test("a receiver-attached mouse keeps using short reports", async () => {
     device.probed.some(({ reportId }) => reportId === 0x10),
     "the 0xFF00 short path is unchanged for receivers",
   );
+});
+
+/**
+ * A mouse whose HITS feature (0x1B0C) holds one [actuation, rapid trigger,
+ * haptics] wire triple per button. The byte values are the ones captured from
+ * a PRO X 3 Superstrike: 0x14 / 0x08 / 0x0c, i.e. actuation 5, rapid trigger 2
+ * (off) and haptics 3, with the rapid-trigger on/off switch in bit 0.
+ */
+function analogButtonsMouse(): { client: LogitechHidppClient; wire: number[][] } {
+  const FEATURE_INDEX = 0x16;
+  const wire = [[0x14, 0x08, 0x0c], [0x14, 0x08, 0x0c]];
+  const { client, device } = harness(0xc54d, { 1: "mouse" });
+  const base = hidppResponder({ 1: "mouse" });
+  device.onRequest = (request) => {
+    const deviceIndex = request[0];
+    const featureId = (request[3] << 8) | request[4];
+    if (request[1] === 0x00 && featureId === 0x1b0c) return successReply(deviceIndex, 0x00, 0x00, [FEATURE_INDEX, 0x00, 0x00]);
+    if (request[1] !== FEATURE_INDEX) return base(request);
+    const fn = request[2] >> 4;
+    const button = request[3];
+    if (fn === 0) return successReply(deviceIndex, FEATURE_INDEX, 0x00, [0x00, 0x03, 0x28, 0x14, 0x14, 0x01]);
+    if (fn === 2) return successReply(deviceIndex, FEATURE_INDEX, 0x20, [button, ...wire[button], 0x00]);
+    if (fn === 1) {
+      wire[button] = [request[4], request[5], request[6]];
+      return successReply(deviceIndex, FEATURE_INDEX, 0x10, [button, request[4], request[5], request[6], 0x00]);
+    }
+    if (fn === 3) return successReply(deviceIndex, FEATURE_INDEX, 0x30, [request[3], request[4], request[5]]);
+    return null;
+  };
+  return { client, wire };
+}
+
+test("HITS tuning reads rapid trigger's on/off state from bit 0, apart from its sensitivity", async () => {
+  const { client, wire } = analogButtonsMouse();
+  await resolveIndex(client);
+  const read = () => (client as unknown as {
+    readAnalogButtonTuning(index: number): Promise<{ buttons: Array<Record<string, unknown>> }>;
+  }).readAnalogButtonTuning(0x16);
+
+  assert.deepEqual((await read()).buttons[0], { actuation: 5, rapidTrigger: 2, haptics: 3, rapidTriggerEnabled: false });
+  wire[0][1] = 0x09; // the same sensitivity with the switch on, as captured
+  assert.deepEqual((await read()).buttons[0], { actuation: 5, rapidTrigger: 2, haptics: 3, rapidTriggerEnabled: true });
+  wire[0][1] = 0x0d; // sensitivity 3, switch on
+  assert.deepEqual((await read()).buttons[0], { actuation: 5, rapidTrigger: 3, haptics: 3, rapidTriggerEnabled: true });
+});
+
+test("HITS tuning turns rapid trigger on and off without touching sensitivity or the other button", async () => {
+  const { client, wire } = analogButtonsMouse();
+  await resolveIndex(client);
+
+  await client.setAnalogButtonTuning(0, { actuation: 5, rapidTrigger: 2, haptics: 3, rapidTriggerEnabled: true });
+  assert.equal(wire[0][1], 0x09);
+  assert.equal(wire[1][1], 0x08, "the other button is untouched");
+
+  await client.setAnalogButtonTuning(0, { actuation: 5, rapidTrigger: 2, haptics: 3, rapidTriggerEnabled: false });
+  assert.equal(wire[0][1], 0x08);
+});
+
+test("a HITS write that does not name the rapid trigger state keeps the current one", async () => {
+  const { client, wire } = analogButtonsMouse();
+  await resolveIndex(client);
+  wire[0][1] = 0x09; // on
+
+  await client.setAnalogButtonTuning(0, { actuation: 5, rapidTrigger: 3, haptics: 3 });
+  assert.equal(wire[0][1], 0x0d, "sensitivity changed, switch still on");
+  wire[0][1] = 0x0c; // off, sensitivity 3
+  await client.setAnalogButtonTuning(0, { actuation: 5, rapidTrigger: 4, haptics: 3 });
+  assert.equal(wire[0][1], 0x10, "sensitivity changed, switch still off");
+});
+
+test("connection wording follows the product id, not the 0xFF43 usage page alone", () => {
+  const base = { wired: false, directConnect: false, bluetoothPage: false, knownUsbProduct: false, boltReceiver: false };
+
+  // PRO X 3 Superstrike on its cable (PID 0xC0A9): a USB mouse whose HID++
+  // interface is on the Bluetooth page. It was labelled "Bluetooth".
+  assert.equal(connectionDetailFor({ ...base, wired: true, bluetoothPage: true, knownUsbProduct: true }), "Wired USB");
+  // The same mouse on its Lightspeed receiver (PID 0xC54F), also on 0xFF43: no
+  // special wording, so the shell shows its usual 2.4 GHz text.
+  assert.equal(connectionDetailFor({ ...base, bluetoothPage: true, knownUsbProduct: true }), undefined);
+  // A real Bluetooth mouse: the page and a product id that is not a USB one.
+  assert.equal(connectionDetailFor({ ...base, bluetoothPage: true }), "Bluetooth");
+  // Everything that was already right stays right.
+  assert.equal(connectionDetailFor({ ...base, directConnect: true }), "Wired USB");
+  assert.equal(connectionDetailFor({ ...base, boltReceiver: true }), "Logi Bolt");
+  assert.equal(connectionDetailFor(base), undefined);
+});
+
+test("persisting HITS validates against the mouse's limits, then hands both buttons to one profile write", async () => {
+  const { client } = analogButtonsMouse();
+  await resolveIndex(client);
+  const writes: unknown[] = [];
+  (client as unknown as { writeActiveProfile(values: unknown): Promise<void> }).writeActiveProfile = async (values) => {
+    writes.push(values);
+  };
+
+  // Outside the limits (actuation 1-10): refused before any profile write.
+  await assert.rejects(
+    () => client.persistAnalogButtonTuning([{ button: 0, actuation: 11, rapidTrigger: 2, haptics: 3 }]),
+    /outside the mouse's supported range/,
+  );
+  assert.equal(writes.length, 0);
+
+  const both = { actuation: 8, rapidTrigger: 2, haptics: 2, rapidTriggerEnabled: false };
+  await client.persistAnalogButtonTuning([{ button: 0, ...both }, { button: 1, ...both }]);
+  assert.deepEqual(writes, [{ analogButtons: [{ button: 0, ...both }, { button: 1, ...both }] }]);
+});
+
+test("HITS press depth events reach listeners and stop after unsubscribing", async () => {
+  const { client } = analogButtonsMouse();
+  await resolveIndex(client);
+  const internals = client as unknown as {
+    getFeature(id: number): Promise<unknown>;
+    deviceIndex: number;
+    onInputReport(event: { reportId: number; data: DataView }): void;
+  };
+  await internals.getFeature(0x1b0c);
+  const push = (feature: number, fn: number, left: number, right = 0) => {
+    const report = new Uint8Array([internals.deviceIndex, feature, fn, left, right, 0, 0]);
+    internals.onInputReport({ reportId: 0x11, data: new DataView(report.buffer) });
+  };
+  const seen: number[][] = [];
+  const stop = client.onAnalogPress((left, right) => seen.push([left, right]));
+  push(0x16, 0x00, 4);
+  push(0x16, 0x00, 0, 10);
+  push(0x16, 0x3b, 1); // a different event on the same feature
+  push(0x05, 0x00, 7); // another feature
+  stop();
+  push(0x16, 0x00, 2);
+  assert.deepEqual(seen, [[4, 0], [0, 10]]);
+});
+
+test("HITS press stream start replays G HUB's captured arm sequence, stop clears the enable byte", async () => {
+  const { client } = analogButtonsMouse();
+  await resolveIndex(client);
+  const internals = client as unknown as {
+    device: { probed: Array<{ data: Uint8Array }> };
+  };
+  await client.startAnalogPressStream();
+  await client.stopAnalogPressStream();
+  const short = internals.device.probed.filter((p) => p.data.length === 6 && p.data[1] === 0x16 && p.data[2] >> 4 === 3);
+  assert.deepEqual(Array.from(short[0].data.slice(3, 6)), [0x01, 0x3c, 0x00]);
+  assert.deepEqual(Array.from(short[1].data.slice(3, 6)), [0x00, 0x00, 0x00]);
 });

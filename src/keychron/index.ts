@@ -16,6 +16,27 @@ export const KEYCHRON_M6_SETTINGS_REPORT_ID = 0xb5;
 export const KEYCHRON_M6_SETTINGS_RESPONSE_REPORT_ID = 0xb6;
 export const KEYCHRON_M6_STATUS_COMMAND = 0x06;
 export const KEYCHRON_M6_STATUS_PACKET_LENGTH = 63;
+/**
+ * Keychron's 4K mice speak Launcher's "4k" protocol on this collection: the
+ * Nordic DMS v1 framing the Orbital driver also uses (64-byte report 0, 0xA1
+ * checksum, 0x40 on byte 0 to route through the receiver). Decoded from
+ * Keychron Launcher, not yet confirmed on hardware.
+ */
+export const KEYCHRON_4K_USAGE_PAGE = 0xff0a;
+export const KEYCHRON_4K_USAGE = 0x01;
+/**
+ * Wired product ID of each 4K model and the model ID its firmware reports in
+ * the version reply, which is how a receiver says what it is paired with
+ * (Launcher's receiver table). 0xd041 is the aluminium M3 Mini 4K.
+ */
+export const KEYCHRON_4K_MICE: ReadonlyArray<{ productId: number; modelId: number; name: string }> = [
+  { productId: 0xd040, modelId: 0x0621, name: "Keychron M4 4K" },
+  { productId: 0xd046, modelId: 0x0624, name: "Keychron M6 4K" },
+  { productId: 0xd03c, modelId: 0x07a0, name: "Keychron M3 4K" },
+  { productId: 0xd037, modelId: 0x0620, name: "Keychron M3 Mini 4K" },
+  { productId: 0xd041, modelId: 0x0622, name: "Keychron M3 Mini 4K" },
+  { productId: 0xd045, modelId: 0x0623, name: "Keychron M2 4K" },
+];
 export const KEYCHRON_PRODUCTS = new Map<number, { name: string; receiver?: boolean }>([
   [0x0440, { name: "Nape Pro" }],
   [0xd026, { name: "Keychron Link-KM", receiver: true }],

@@ -42,7 +42,7 @@ checklist.
 | ATK | `@openmouse/protocol/atk` |
 | Corsair | `@openmouse/protocol/corsair` |
 | Dareu | `@openmouse/protocol/dareu` |
-| Delux M800 Mini | `@openmouse/protocol/delux` |
+| Delux M800 Mini / M600 Pro | `@openmouse/protocol/delux` |
 | Endgame Gear OP1/XM2 8K | `@openmouse/protocol/endgame-gear-op1` |
 | Endgame Gear wireless | `@openmouse/protocol/endgame-gear-we` |
 | Fantech | `@openmouse/protocol/fantech` |
@@ -59,11 +59,12 @@ checklist.
 | Logitech | `@openmouse/protocol/logitech` |
 | MCHOSE | `@openmouse/protocol/mchose` |
 | Microsoft | `@openmouse/protocol/microsoft` |
+| Motospeed | `@openmouse/protocol/motospeed` |
 | moddoMOUSE | `@openmouse/protocol/moddo` |
 | Ninjutso | `@openmouse/protocol/ninjutso` |
 | Orbital | `@openmouse/protocol/orbital` |
 | RAWM | `@openmouse/protocol/rawm` |
-| Pulsar | `@openmouse/protocol/pulsar` |
+| Pulsar / GravaStar | `@openmouse/protocol/pulsar` |
 | Razer legacy/current | `@openmouse/protocol/razer` |
 | Razer V4 | `@openmouse/protocol/razer-v4` |
 | Ryunix | `@openmouse/protocol/ryunix` |
