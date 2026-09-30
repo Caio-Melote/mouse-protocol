@@ -9,6 +9,7 @@ import { SUPPORTED_HID_FILTERS, VENDOR_ID } from "./vendors.ts";
 import { LAMZU_ATLANTIS_PRODUCTS, LAMZU_PRODUCTS } from "@openmouse/protocol/lamzu";
 import { ORBITAL_DEVICES } from "@openmouse/protocol/orbital";
 import { MCHOSE_V3_PRODUCT_IDS } from "@openmouse/protocol/mchose";
+import { KEYCHRON_8K_NORDIC_PRODUCT_IDS } from "@openmouse/protocol/keychron";
 import {
   DELUX_M600_PRO_WIRED_PID,
   DELUX_M800_MINI_WIRELESS_PID,
@@ -87,6 +88,9 @@ function candidateProductIds(): number[] {
     // The MCHOSE V3 driver matches on an id allowlist and shares its usage
     // page with the V2, so the probe needs a real one to reach it at all.
     ...MCHOSE_V3_PRODUCT_IDS,
+    // The Keychron 8K Nordic driver claims its ids out of the 4K family's
+    // shared collection, so the probe needs them to reach it.
+    ...KEYCHRON_8K_NORDIC_PRODUCT_IDS,
     // Claimed by id alone and defined outside src/drivers, so the source
     // scan below would not find it.
     DELUX_M600_PRO_WIRED_PID,

@@ -37,6 +37,27 @@ export const KEYCHRON_4K_MICE: ReadonlyArray<{ productId: number; modelId: numbe
   { productId: 0xd041, modelId: 0x0622, name: "Keychron M3 Mini 4K" },
   { productId: 0xd045, modelId: 0x0623, name: "Keychron M2 4K" },
 ];
+/**
+ * Mice on Launcher's "8k_nordic" protocol: the same 0xff0a collection and
+ * framing as the 4K family, with Orbital's DMS v2 settings layout. The G3 Air
+ * config forces that protocol by name; Launcher's product list describes the
+ * mouse as "54L" (nRF54L15).
+ */
+export const KEYCHRON_8K_NORDIC_MICE: ReadonlyArray<{ productId: number; name: string }> = [
+  { productId: 0xd077, name: "Keychron G3 Air" },
+];
+/**
+ * Ultra-Link 8K receivers from Keychron's product list. 0xd05b is listed with
+ * an nRF54LM20A, the receiver half of the 54L platform; 0xd078 was added next
+ * to the G3 Air. Neither pairing is confirmed on hardware.
+ */
+export const KEYCHRON_8K_NORDIC_RECEIVER_PRODUCT_IDS: readonly number[] = [0xd05b, 0xd078];
+export const KEYCHRON_8K_NORDIC_PRODUCT_IDS: readonly number[] = [
+  ...KEYCHRON_8K_NORDIC_MICE.map((mouse) => mouse.productId),
+  ...KEYCHRON_8K_NORDIC_RECEIVER_PRODUCT_IDS,
+];
+/** Lemokey, Keychron's gaming brand; an 8K Nordic handshake carries either vendor ID. */
+export const LEMOKEY_VENDOR_ID = 0x362d;
 export const KEYCHRON_PRODUCTS = new Map<number, { name: string; receiver?: boolean }>([
   [0x0440, { name: "Nape Pro" }],
   [0xd026, { name: "Keychron Link-KM", receiver: true }],

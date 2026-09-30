@@ -3,6 +3,7 @@ import {
   KEYCHRON_4K_MICE as MICE,
   KEYCHRON_4K_USAGE as USAGE,
   KEYCHRON_4K_USAGE_PAGE as USAGE_PAGE,
+  KEYCHRON_8K_NORDIC_PRODUCT_IDS,
   KEYCHRON_M6_USAGE_PAGE,
   KEYCHRON_VENDOR_ID,
 } from "@openmouse/protocol/keychron";
@@ -98,9 +99,14 @@ export class Keychron4kHidClient {
     this.receiver = !MICE.some((mouse) => mouse.productId === device.productId);
   }
 
-  /** Launcher prefers the M6's 0xffc1 protocol when a device offers both, so this does too. */
+  /**
+   * Launcher prefers the M6's 0xffc1 protocol when a device offers both, so
+   * this does too. The 8K Nordic mice and receivers share the collection and
+   * go to their own driver.
+   */
   static isSupported(device: HIDDevice): boolean {
     return device.vendorId === KEYCHRON_VENDOR_ID
+      && !KEYCHRON_8K_NORDIC_PRODUCT_IDS.includes(device.productId)
       && device.collections.some((collection) => collection.usagePage === USAGE_PAGE && collection.usage === USAGE)
       && !device.collections.some((collection) => collection.usagePage === KEYCHRON_M6_USAGE_PAGE);
   }
@@ -328,7 +334,7 @@ export class Keychron4kHidClient {
     // Strict match: a routed live report from the mouse (0x41) must not stand in for the receiver's own answer.
     const handshake = await this.request(commandPacket(CMD.power), (bytes) => bytes[0] === CMD.power[0] && bytes[3] === CMD.power[2], false);
     if ((handshake[6] === 0x34 && handshake[7] === 0x34) || (handshake[6] === 0x2d && handshake[7] === 0x36)) {
-      throw new Error("This Keychron mouse uses the 8K Nordic protocol, which OpenMouse does not support yet.");
+      throw new Error(`This Keychron device (product ID 0x${this.device.productId.toString(16).padStart(4, "0")}) uses the 8K Nordic protocol, but OpenMouse does not know it yet. Please report the ID.`);
     }
     const version = await this.request(commandPacket(CMD.version), replyTo(CMD.version)).catch(() => null);
     const modelId = version ? readU16(version, 4) : -1;

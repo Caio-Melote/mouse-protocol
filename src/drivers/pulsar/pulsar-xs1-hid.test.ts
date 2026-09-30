@@ -104,9 +104,24 @@ test("encodes the 64-byte request with a checksum", () => {
 test("detects the X3 feature-report control interface", () => {
   assert.equal(PulsarXs1HidClient.isSupported(fakeDevice(0x5402).device), true);
   assert.equal(PulsarXs1HidClient.isSupported(fakeDevice(0x5403).device), true);
+  assert.equal(PulsarXs1HidClient.isSupported(fakeDevice(0x3404).device), true);
   assert.equal(PulsarXs1HidClient.isSupported(fakeDevice(0x3409).device), true);
   assert.equal(PulsarXs1HidClient.isSupported(fakeDevice(0x3403).device), false);
   assert.equal(PulsarXs1HidClient.isSupported(fakeDevice(0x5405).device), false);
+});
+
+test("ignores unnumbered feature reports outside the 0xffff:1 control collection", () => {
+  const device = fakeDevice(0x5403).device;
+  device.collections = [{
+    usagePage: 0x01,
+    usage: 0x02,
+    type: 1,
+    children: [],
+    featureReports: [{ reportId: 0, items: [{ reportSize: 8, reportCount: 1 }] }],
+    inputReports: [],
+    outputReports: [],
+  }] as unknown as HIDCollectionInfo[];
+  assert.equal(PulsarXs1HidClient.isSupported(device), false);
 });
 
 test("ignores interfaces that also expose the legacy report-8 control", () => {

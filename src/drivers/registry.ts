@@ -9,6 +9,7 @@ import { GearHubHidClient } from "./gearhub/hid.ts";
 import { eggWeCreate, eggWeIsSupported, eggWeSupportScore, isEggWeClient, type EggWeHidClient } from "./endgame/egg-we-control.ts";
 import { FinalmouseHidClient } from "./finalmouse/hid.ts";
 import { Keychron4kHidClient } from "./keychron/mouse-4k-hid.ts";
+import { Keychron8kNordicHidClient } from "./keychron/mouse-8k-nordic-hid.ts";
 import { KeychronM6HidClient } from "./keychron/m6-hid.ts";
 import { KeychronNapeHidClient } from "./keychron/nape-hid.ts";
 import { LamzuAtlantisHidClient } from "./lamzu-atlantis/hid.ts";
@@ -57,6 +58,7 @@ import { MchoseHidClient } from "./mchose/hid.ts";
 import { MchoseDockHidClient } from "./mchose/dock-hid.ts";
 import { MchoseA5ProMaxHidClient } from "./mchose/a5-gen1-hid.ts";
 import { KsnakeHidClient } from "./ksnake/hid.ts";
+import { isNoirM2NexDevice } from "../ksnake/index.ts";
 import { MicrosoftHidClient } from "./microsoft/hid.ts";
 import { MotospeedHidClient } from "./motospeed/hid.ts";
 import { DareuHidClient } from "./dareu/hid.ts";
@@ -69,7 +71,7 @@ import { BytechHidClient } from "./bytech/hid.ts";
 import { RapooHidClient } from "./rapoo/hid.ts";
 
 export type PulsarClient = PulsarHidClient | PulsarProHidClient | PulsarXs1HidClient;
-export type SupportedClient = RawmHidClient | MotospeedHidClient | LogitechHidppClient | PulsarClient | EggOp1HidClient | EggWeHidClient | FinalmouseHidClient | WLMouseHidClient | WLMouseBeastX4kHidClient | LamzuHidClient | LamzuAtlantisHidClient | OrbitalHidClient | RazerHidClient | RazerViperHidClient | RazerViperMiniHidClient | RazerViperV4ProHidClient | RazerCobraHidClient | TeevolutionHidClient | AtkHidClient | AtkBitmouseHidClient | VgnF2HidClient | VaxeeHidClient | KeychronM6HidClient | Keychron4kHidClient | KeychronNapeHidClient | ModdoHidClient | NinjutsoHidClient | ZaunkoenigHidClient | CorsairHidClient | AttackSharkHidClient | FantechHidClient | GearHubHidClient | WootingHidClient | WallhackMouseHidClient | WallhackKeyboardHidClient | GWolvesHidClient | GWolvesXviHidClient | SteelSeriesRival3HidClient | SteelSeriesAerox3HidClient | SteelSeriesRival3WirelessHidClient | SteelSeriesAerox5HidClient | SteelSeriesAerox5WirelessHidClient | SteelSeriesRival650HidClient | SteelSeriesAerox9WirelessHidClient | SteelSeriesRival310HidClient | SteelSeriesPrimePlusHidClient | SteelSeriesPrimeMiniWirelessHidClient | SteelSeriesSenseiTenHidClient | GloriousHidClient | GloriousClassicHidClient | MchoseHidClient | MchoseDockHidClient | MchoseA5ProMaxHidClient | KsnakeHidClient | MicrosoftHidClient | DareuHidClient | RedragonHidClient | IncottHidClient | HyperXHidClient | MchoseV3HidClient | AsusHidClient | KyuProMx1Client | DeluxHidClient | BytechHidClient | RapooHidClient;
+export type SupportedClient = RawmHidClient | MotospeedHidClient | LogitechHidppClient | PulsarClient | EggOp1HidClient | EggWeHidClient | FinalmouseHidClient | WLMouseHidClient | WLMouseBeastX4kHidClient | LamzuHidClient | LamzuAtlantisHidClient | OrbitalHidClient | RazerHidClient | RazerViperHidClient | RazerViperMiniHidClient | RazerViperV4ProHidClient | RazerCobraHidClient | TeevolutionHidClient | AtkHidClient | AtkBitmouseHidClient | VgnF2HidClient | VaxeeHidClient | KeychronM6HidClient | Keychron4kHidClient | Keychron8kNordicHidClient | KeychronNapeHidClient | ModdoHidClient | NinjutsoHidClient | ZaunkoenigHidClient | CorsairHidClient | AttackSharkHidClient | FantechHidClient | GearHubHidClient | WootingHidClient | WallhackMouseHidClient | WallhackKeyboardHidClient | GWolvesHidClient | GWolvesXviHidClient | SteelSeriesRival3HidClient | SteelSeriesAerox3HidClient | SteelSeriesRival3WirelessHidClient | SteelSeriesAerox5HidClient | SteelSeriesAerox5WirelessHidClient | SteelSeriesRival650HidClient | SteelSeriesAerox9WirelessHidClient | SteelSeriesRival310HidClient | SteelSeriesPrimePlusHidClient | SteelSeriesPrimeMiniWirelessHidClient | SteelSeriesSenseiTenHidClient | GloriousHidClient | GloriousClassicHidClient | MchoseHidClient | MchoseDockHidClient | MchoseA5ProMaxHidClient | KsnakeHidClient | MicrosoftHidClient | DareuHidClient | RedragonHidClient | IncottHidClient | HyperXHidClient | MchoseV3HidClient | AsusHidClient | KyuProMx1Client | DeluxHidClient | BytechHidClient | RapooHidClient;
 
 export interface DeviceDriver {
   brand: string;
@@ -119,6 +121,7 @@ export const DEVICE_DRIVERS: readonly DeviceDriver[] = [
   { brand: "Razer", supports: (device) => RazerViperV4ProHidClient.isSupported(device), create: (device) => new RazerViperV4ProHidClient(device), score: () => 7 },
   { brand: "Keychron", supports: (device) => KeychronM6HidClient.isSupported(device), create: (device) => new KeychronM6HidClient(device), score: () => 7 },
   { brand: "Keychron", supports: (device) => Keychron4kHidClient.isSupported(device), create: (device) => new Keychron4kHidClient(device), score: () => 7 },
+  { brand: "Keychron", supports: (device) => Keychron8kNordicHidClient.isSupported(device), create: (device) => new Keychron8kNordicHidClient(device), score: () => 7 },
   { brand: "Keychron", supports: (device) => KeychronNapeHidClient.isSupported(device), create: (device) => new KeychronNapeHidClient(device), score: () => 6 },
   // Ahead of Fantech: GearHub-V5 mice (Lingbao M5 Pro, Attack Shark R2, …)
   // answer on the same VID 0x3151, usage page 0xFFFF, usage 0x02 interface
@@ -184,5 +187,6 @@ export function deviceBrand(client: SupportedClient): string {
   if (client instanceof AtkHidClient) return client.deviceBrand();
   if (client instanceof DeluxHidClient) return client.deviceBrand();
   if (client instanceof AttackSharkHidClient) return client.deviceBrand();
+  if (client instanceof KsnakeHidClient && isNoirM2NexDevice(client.device)) return "Noir Gear";
   return driverFor(client.device)?.brand ?? "Unknown";
 }
