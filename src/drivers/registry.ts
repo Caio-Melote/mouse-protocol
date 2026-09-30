@@ -58,6 +58,7 @@ import { MchoseHidClient } from "./mchose/hid.ts";
 import { MchoseDockHidClient } from "./mchose/dock-hid.ts";
 import { MchoseA5ProMaxHidClient } from "./mchose/a5-gen1-hid.ts";
 import { KsnakeHidClient } from "./ksnake/hid.ts";
+import { isNoirM2NexDevice } from "../ksnake/index.ts";
 import { MicrosoftHidClient } from "./microsoft/hid.ts";
 import { MotospeedHidClient } from "./motospeed/hid.ts";
 import { DareuHidClient } from "./dareu/hid.ts";
@@ -181,5 +182,6 @@ export function deviceBrand(client: SupportedClient): string {
   if (client instanceof AtkHidClient) return client.deviceBrand();
   if (client instanceof DeluxHidClient) return client.deviceBrand();
   if (client instanceof AttackSharkHidClient) return client.deviceBrand();
+  if (client instanceof KsnakeHidClient && isNoirM2NexDevice(client.device)) return "Noir Gear";
   return driverFor(client.device)?.brand ?? "Unknown";
 }

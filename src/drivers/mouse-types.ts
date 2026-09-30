@@ -125,7 +125,12 @@ export type MouseLightingMode =
   | "Reactive"
   | "Breathing random"
   | "Breathing single"
-  | "Breathing dual";
+  | "Breathing dual"
+  | "Neon"
+  | "Cycling Flash"
+  | "YOYO Ball"
+  | "Single Flash"
+  | "Breathing Loop";
 
 export interface AtkStoredButton {
   id: "left" | "right" | "middle" | "back" | "forward" | "bottom";
@@ -148,7 +153,7 @@ export interface AtkReceiverInfo {
 }
 
 export interface MouseStatus {
-  brand: "RAWM" | "Motospeed" | "Logitech" | "Pulsar" | "Endgame Gear" | "WLMouse" | "G-Wolves" | "Lamzu" | "CRDRAKO" | "Attack Shark" | "Orbital" | "Razer" | "Teevolution" | "ATK" | "VXE" | "VGN" | "VAXEE" | "Finalmouse" | "Keychron" | "moddoMOUSE" | "Ninjutso" | "Zaunkoenig" | "Fantech" | "Wooting" | "WALLHACK" | "SteelSeries" | "Glorious" | "MCHOSE" | "K-snake" | "Lingbao" | "GearHub" | "Corsair" | "Microsoft" | "Dareu" | "Redragon" | "Incott" | "HyperX" | "ASUS" | "Ryunix" | "Delux" | "GravaStar" | "IPI";
+  brand: "RAWM" | "Motospeed" | "Logitech" | "Pulsar" | "Endgame Gear" | "WLMouse" | "G-Wolves" | "Lamzu" | "CRDRAKO" | "Attack Shark" | "Orbital" | "Razer" | "Teevolution" | "ATK" | "VXE" | "VGN" | "VAXEE" | "Finalmouse" | "Keychron" | "moddoMOUSE" | "Ninjutso" | "Zaunkoenig" | "Fantech" | "Wooting" | "WALLHACK" | "SteelSeries" | "Glorious" | "MCHOSE" | "K-snake" | "Noir Gear" | "Lingbao" | "GearHub" | "Corsair" | "Microsoft" | "Dareu" | "Redragon" | "Incott" | "HyperX" | "ASUS" | "Ryunix" | "Delux" | "GravaStar" | "IPI";
   name: string;
   /** Driver-supplied UI policy (optional; keeps control.ts brand-agnostic). */
   ui?: MouseUiHints;
@@ -408,5 +413,7 @@ export interface MouseStatus {
   lighting?: MouseLighting;
   /** Independently addressable lighting zones. `lighting` remains the first zone for compatibility. */
   lightingZones?: MouseLighting[];
+  /** Device-side scroll direction, when the firmware stores it. */
+  scrollDirection?: "Forward" | "Reverse" | null;
   firmware: string[];
 }

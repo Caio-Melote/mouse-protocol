@@ -2,23 +2,38 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   KSNAKE_PRODUCT_ID,
+  KSNAKE_MACRO_REPORT_ID,
   KSNAKE_USAGE,
   KSNAKE_USAGE_PAGE,
   ksnakeDecodeBattery,
   ksnakeDecodeConfig,
+  ksnakeDecodeLightMode,
   ksnakeDecodeKeys,
+  ksnakeDecodeMacroChunk,
   ksnakeDecodePollingRate,
   ksnakeDecodeVersion,
   ksnakeEncodePollingRate,
+  ksnakeEncodeSetLightMode,
   ksnakeEncodeSetConfig,
   ksnakeEncodeSetKeys,
+  ksnakeEncodeMacroChunk,
+  ksnakeEncodeMacroCommit,
   ksnakeGetBatteryRequest,
   ksnakeGetConfigRequest,
   ksnakeGetKeysRequest,
+  ksnakeGetMacroChunkRequest,
   ksnakeGetVersionRequest,
+  ksnakeFindButtonAction,
+  ksnakeBindingLabel,
+  ksnakeEncodeMacroData,
+  ksnakeDecodeMacroData,
+  ksnakeIsKnownKeyType,
   ksnakeIsValidDpi,
+  ksnakeKeysLookPlausible,
+  isNoirM2NexDevice,
 } from "../../ksnake/index.js";
 import { KsnakeHidClient } from "./hid.ts";
+import { createSupportedClient, deviceBrand } from "../registry.ts";
 
 function fakeDevice(overrides?: Partial<HIDDevice>): HIDDevice {
   return {
@@ -85,6 +100,15 @@ describe("ksnake codec", () => {
     }
   });
 
+  it("frames the vendor lighting modes", () => {
+    assert.equal(ksnakeDecodeLightMode(6), "Breathing Loop");
+    assert.equal(ksnakeDecodeLightMode(99), null);
+    assert.deepEqual(
+      [...ksnakeEncodeSetLightMode(4).slice(0, 11)],
+      [0x55, 0x21, 0, 0, 3, 0, 0, 0, 0, 0, 4],
+    );
+  });
+
   it("encodes setConfig with vendor layout", () => {
     const req = ksnakeEncodeSetConfig({
       lightMode: 2,
@@ -111,8 +135,17 @@ describe("ksnake codec", () => {
 describe("KsnakeHidClient", () => {
   it("matches the X11 control collection", () => {
     assert.equal(KsnakeHidClient.isSupported(fakeDevice()), true);
+    assert.equal(KsnakeHidClient.isSupported(fakeDevice({ vendorId: 0xa8a4, productName: "M2-NEX" })), true);
     assert.equal(KsnakeHidClient.isSupported(fakeDevice({ vendorId: 0x046d })), false);
     assert.equal(KsnakeHidClient.isSupported(fakeDevice({ productId: 0x1234 })), false);
+  });
+
+  it("recognizes the M2-NEX retail identity without changing the shared transport", () => {
+    assert.equal(isNoirM2NexDevice(fakeDevice({ productName: "M2-NEX" })), true);
+    assert.equal(isNoirM2NexDevice(fakeDevice({ productName: "K-snake X11" })), false);
+    const client = createSupportedClient(fakeDevice({ vendorId: 0xa8a4, productName: "M2-NEX" }));
+    assert.ok(client instanceof KsnakeHidClient);
+    assert.equal(deviceBrand(client), "Noir Gear");
   });
 
   it("rejects unsupported polling rates without touching HID", async () => {
@@ -121,11 +154,17 @@ describe("KsnakeHidClient", () => {
   });
 });
 
-type FakeListener = (event: { data: DataView }) => void;
+type FakeListener = (event: { data: DataView; reportId?: number }) => void;
 
-function configReply(stages: number[], reportRate: number, dpiIndex: number, lodValue = 1): Uint8Array {
+function configReply(
+  stages: number[],
+  reportRate: number,
+  dpiIndex: number,
+  lodValue = 1,
+  options: { lightMode?: number; scrollFlag?: number; sleepLight?: number; flags?: number } = {},
+): Uint8Array {
   const reply = new Uint8Array(64);
-  reply[9] = 2;
+  reply[9] = options.lightMode ?? 2;
   reply[10] = reportRate + 1;
   reply[11] = 6;
   reply[12] = dpiIndex + 1;
@@ -133,13 +172,13 @@ function configReply(stages: number[], reportRate: number, dpiIndex: number, lod
     reply[13 + i * 2] = stage & 0xff;
     reply[14 + i * 2] = (stage >> 8) & 0xff;
   });
-  reply[48] = 0;
+  reply[48] = options.scrollFlag ?? 0;
   reply[49] = lodValue;
   reply[50] = 53;
   reply[51] = 2;
-  reply[52] = 10;
+  reply[52] = options.sleepLight ?? 10;
   reply[53] = 0;
-  reply[55] = 0x11;
+  reply[55] = options.flags ?? 0x11;
   return reply;
 }
 
@@ -154,7 +193,11 @@ class FakeKsnakeDevice {
   reportRate = 3;
   dpiIndex = 2;
   lodValue = 1;
-  /** 7 key slots, mirroring a retail dump (slot 4 = macro reference). */
+  lightMode = 2;
+  scrollFlag = 0;
+  sleepLight = 10;
+  flags = 0x11;
+  /** 8 wire key slots, mirroring a retail dump (slot 4 = macro reference). */
   keys = [
     { type: 32, code1: 1, code2: 0, code3: 0 },
     { type: 32, code1: 2, code2: 0, code3: 0 },
@@ -163,6 +206,7 @@ class FakeKsnakeDevice {
     { type: 112, code1: 0, code2: 1, code3: 3 },
     { type: 33, code1: 85, code2: 0, code3: 0 },
     { type: 33, code1: 56, code2: 1, code3: 0 },
+    { type: 33, code1: 56, code2: 255, code3: 0 },
   ];
   /** Upcoming replies to swallow (simulates a sleeping dongle). */
   dropReplies = 0;
@@ -174,6 +218,7 @@ class FakeKsnakeDevice {
   badKeysOnce = false;
   /** Next keys reply is plausible-but-wrong once (simulates a crossed report). */
   garbageKeysOnce = false;
+  macro = Uint8Array.from({ length: 4096 }, (_, index) => index & 0xff);
   sent: number[] = [];
   private listeners = new Map<string, Set<FakeListener>>();
 
@@ -198,8 +243,19 @@ class FakeKsnakeDevice {
     this.listeners.get(type)?.delete(listener);
   }
 
-  async sendReport(_reportId: number, payload: ArrayBuffer): Promise<void> {
+  async sendReport(reportId: number, payload: ArrayBuffer): Promise<void> {
     const body = new Uint8Array(payload);
+    if (reportId === KSNAKE_MACRO_REPORT_ID && body[0] === 0x0c) {
+      const length = body[1];
+      const offset = body[2] | (body[3] << 8);
+      const reply = new Uint8Array(64);
+      reply.set(this.macro.slice(offset, offset + length), 8);
+      queueMicrotask(() => {
+        const data = new DataView(reply.buffer, reply.byteOffset, reply.byteLength);
+        this.listeners.get("inputreport")?.forEach((listener) => listener({ data, reportId }));
+      });
+      return;
+    }
     this.sent.push(body[1]);
     let reply: Uint8Array;
     if (body[1] === 0x03) {
@@ -218,7 +274,7 @@ class FakeKsnakeDevice {
     } else if (body[1] === 0x08) {
       reply = new Uint8Array(64);
       if (this.garbageKeysOnce) {
-        for (let i = 0; i < 7; i++) {
+        for (let i = 0; i < 8; i++) {
           reply[8 + i * 4] = 99;
           reply[9 + i * 4] = i;
         }
@@ -233,7 +289,7 @@ class FakeKsnakeDevice {
       this.badKeysOnce = false;
       this.garbageKeysOnce = false;
     } else if (body[1] === 0x09) {
-      for (let i = 0; i < 6; i++) {
+      for (let i = 0; i < 8; i++) {
         this.keys[i] = { type: body[8 + i * 4], code1: body[9 + i * 4], code2: body[10 + i * 4], code3: body[11 + i * 4] };
       }
       reply = new Uint8Array(64);
@@ -243,6 +299,20 @@ class FakeKsnakeDevice {
         reply[10 + i * 4] = key.code2;
         reply[11 + i * 4] = key.code3;
       });
+    } else if (body[1] === 0x21) {
+      this.lightMode = body[10];
+      reply = new Uint8Array(64);
+      reply[1] = 0x21;
+      reply[10] = this.lightMode;
+    } else if (body[1] === 0x0d) {
+      const length = body[4];
+      const offset = body[5] | (body[6] << 8);
+      this.macro.set(body.slice(8, 8 + length), offset);
+      reply = new Uint8Array(64);
+      reply[1] = 0x0d;
+    } else if (body[1] === 0x10) {
+      reply = new Uint8Array(64);
+      reply[1] = 0x10;
     } else {
       if (body[1] === 0x0f) {
         for (let i = 0; i < 6; i++) {
@@ -251,8 +321,17 @@ class FakeKsnakeDevice {
         this.reportRate = body[10] - 1;
         this.dpiIndex = body[12] - 1;
         this.lodValue = body[49];
+        this.lightMode = body[9];
+        this.scrollFlag = body[48];
+        this.sleepLight = body[52];
+        this.flags = body[54];
       }
-      reply = configReply(this.stages, this.reportRate, this.dpiIndex, this.lodValue);
+      reply = configReply(this.stages, this.reportRate, this.dpiIndex, this.lodValue, {
+        lightMode: this.lightMode,
+        scrollFlag: this.scrollFlag,
+        sleepLight: this.sleepLight,
+        flags: this.flags,
+      });
     }
     queueMicrotask(() => {
       if (this.dropReplies > 0) {
@@ -260,7 +339,7 @@ class FakeKsnakeDevice {
         return;
       }
       const data = new DataView(reply.buffer, reply.byteOffset, reply.byteLength);
-      this.listeners.get("inputreport")?.forEach((listener) => listener({ data }));
+      this.listeners.get("inputreport")?.forEach((listener) => listener({ data, reportId }));
     });
   }
 }
@@ -299,6 +378,44 @@ describe("KsnakeHidClient writes", () => {
     assert.equal(device.reportRate, 2);
   });
 
+  it("exposes and writes the vendor sleep timeout choices", async () => {
+    const device = new FakeKsnakeDevice();
+    const client = fastClient(device);
+
+    assert.deepEqual(client.getSleepOptions(), [60, 180, 300, 600, 1200, 1800, 3600]);
+    assert.equal((await client.readStatus()).sleepTimeout, 600);
+    assert.equal(await client.setSleepTimeout(180), 180);
+    assert.equal(device.sleepLight, 3);
+    assert.equal((await client.readStatus()).sleepTimeout, 180);
+  });
+
+  it("exposes and writes the vendor scroll direction and lighting mode", async () => {
+    const device = new FakeKsnakeDevice();
+    const client = fastClient(device);
+    const status = await client.readStatus();
+    assert.equal(status.scrollDirection, "Forward");
+    assert.equal(status.lighting?.mode, "Neon");
+    assert.equal(await client.setScrollDirection("Reverse"), "Reverse");
+    assert.equal(device.scrollFlag, 1);
+    const lighting = await client.setLighting({
+      zone: "Mouse",
+      modes: ["Off", "Neon"],
+      mode: "Off",
+      color: null,
+      color2: null,
+      colorModes: [],
+      dualColorModes: [],
+      reactiveModes: [],
+      speeds: [],
+      speed: null,
+    });
+    assert.equal(lighting.mode, "Off");
+    assert.equal(device.lightMode, 0);
+    const after = await client.readStatus();
+    assert.equal(after.scrollDirection, "Reverse");
+    assert.equal(after.lighting?.mode, "Off");
+  });
+
   it("switches the active DPI stage and confirms it", async () => {
     const device = new FakeKsnakeDevice();
     assert.equal(await fastClient(device).setActiveDpiStage(4), 4);
@@ -319,6 +436,39 @@ describe("KsnakeHidClient writes", () => {
     assert.equal(device.stages[0], 600);
   });
 
+  it("reads the optional macro store through report 6", async () => {
+    const device = new FakeKsnakeDevice();
+    const data = await fastClient(device).getMacroData();
+    assert.deepEqual(data, device.macro);
+  });
+
+  it("reads and writes decoded onboard macro profiles", async () => {
+    const device = new FakeKsnakeDevice();
+    const client = fastClient(device);
+    const profiles = [
+      { steps: [
+        { type: 2 as const, action: 1 as const, delayMs: 12, code: 4 },
+        { type: 2 as const, action: 2 as const, delayMs: 34, code: 4 },
+      ] },
+      { steps: [{ type: 3 as const, action: 1 as const, delayMs: 2, code: 1 }] },
+    ];
+
+    await client.setMacros(profiles);
+    const decoded = await client.getMacros();
+    assert.deepEqual(decoded.slice(0, 2), profiles);
+    assert.equal(decoded.slice(2).every((profile) => profile.steps.length === 0), true);
+  });
+
+  it("uploads macro chunks and waits for vendor acknowledgements", async () => {
+    const device = new FakeKsnakeDevice();
+    const data = Uint8Array.from({ length: 60 }, (_, index) => (255 - index) & 0xff);
+
+    await fastClient(device).setMacroData(data);
+
+    assert.deepEqual([...device.macro.slice(0, data.length)], [...data]);
+    assert.deepEqual(device.sent.filter((command) => command === 0x0d || command === 0x10), [0x0d, 0x0d, 0x10]);
+  });
+
   it("retries status reads that fail validation", async () => {
     const device = new FakeKsnakeDevice();
     device.badVersionOnce = true;
@@ -336,16 +486,26 @@ describe("KsnakeHidClient writes", () => {
     assert.equal(device.lodValue, 2);
   });
 
+  it("does not write lift-off when the firmware reports an unknown value", async () => {
+    const device = new FakeKsnakeDevice();
+    device.lodValue = 0xff;
+    await assert.rejects(
+      () => fastClient(device).setLiftOffDistance("Low"),
+      /did not report a readable lift-off/,
+    );
+    assert.ok(!device.sent.includes(0x0f));
+  });
+
   it("rejects the unsupported medium lift-off distance", async () => {
     const device = new FakeKsnakeDevice();
     await assert.rejects(() => fastClient(device).setLiftOffDistance("Medium"), /does not support a medium/);
   });
 
-  it("decodes the 7 button slots from a keys reply", () => {
+  it("decodes all 8 wire key slots from a keys reply", () => {
     const reply = new Uint8Array(64);
     const slots = [
       [32, 1, 0, 0], [32, 2, 0, 0], [32, 4, 0, 0], [32, 8, 0, 0],
-      [112, 0, 1, 3], [33, 85, 0, 0], [33, 56, 1, 0],
+      [112, 0, 1, 3], [33, 85, 0, 0], [33, 56, 1, 0], [33, 56, 255, 0],
     ];
     slots.forEach(([type, c1, c2, c3], i) => {
       reply[8 + i * 4] = type;
@@ -355,6 +515,11 @@ describe("KsnakeHidClient writes", () => {
     });
     assert.deepEqual(ksnakeDecodeKeys(reply), slots.map(([type, code1, code2, code3]) => ({ type, code1, code2, code3 })));
     assert.equal(ksnakeDecodeKeys(new Uint8Array(10)), null);
+  });
+
+  it("rejects the M2-NEX all-0xff key-map sentinel", () => {
+    const unavailable = Array.from({ length: 8 }, () => ({ type: 0xff, code1: 0xff, code2: 0xff, code3: 0xff }));
+    assert.equal(ksnakeKeysLookPlausible(unavailable), false);
   });
 
   it("encodes setKeys with the vendor layout and fixed tail", () => {
@@ -368,11 +533,63 @@ describe("KsnakeHidClient writes", () => {
     ]);
     assert.deepEqual([...req.slice(0, 5)], [0x55, 0x09, 0xa5, 0x22, 0x20]);
     // Wire offsets (vendor t[9..] minus the t[0] report-id placeholder):
-    // slot 0 type at data[8], slot 5 at data[28..31], scroll tail at data[32..39].
+    // slot 0 type at data[8], slot 5 at data[28..31], wheel slots at data[32..39].
     assert.deepEqual([...req.slice(8, 12)], [32, 1, 0, 0]);
     assert.deepEqual([...req.slice(28, 32)], [33, 85, 0, 0]);
     assert.deepEqual([...req.slice(32, 40)], [33, 56, 1, 0, 33, 56, 255, 0]);
     assert.deepEqual([...req.slice(40)], new Array(24).fill(0));
+  });
+
+  it("keeps the verified vendor-control bindings byte-for-byte", () => {
+    assert.equal(ksnakeIsKnownKeyType(16), true);
+    assert.deepEqual(ksnakeFindButtonAction("Escape"), { type: 16, code1: 0, code2: 41, code3: 0 });
+    assert.deepEqual(ksnakeFindButtonAction("DPI +"), { type: 240, code1: 1, code2: 1, code3: 0 });
+    assert.deepEqual(ksnakeFindButtonAction("DPI -"), { type: 240, code1: 1, code2: 2, code3: 0 });
+    assert.deepEqual(ksnakeFindButtonAction("Report Rate +"), { type: 240, code1: 2, code2: 1, code3: 0 });
+    assert.deepEqual(ksnakeFindButtonAction("Web refresh"), { type: 48, code1: 39, code2: 2, code3: 0 });
+    assert.deepEqual(ksnakeFindButtonAction("Macro 4"), { type: 112, code1: 3, code2: 0, code3: 0 });
+    assert.equal(ksnakeBindingLabel({ type: 112, code1: 3, code2: 1, code3: 3 }), "Macro 4");
+  });
+
+  it("frames and round-trips the vendor macro memory format", () => {
+    const profiles = [
+      {
+        steps: [
+          { type: 2 as const, action: 1 as const, delayMs: 10, code: 4 },
+          { type: 2 as const, action: 2 as const, delayMs: 25, code: 4 },
+        ],
+      },
+      { steps: [] },
+      {
+        steps: [{ type: 3 as const, action: 1 as const, delayMs: 2, code: 1 }],
+      },
+    ];
+    const data = ksnakeEncodeMacroData(profiles);
+    assert.equal(data.length, 68 + 12);
+    assert.deepEqual([...data.slice(0, 8)], [68, 0, 64, 0, 76, 0, 64, 0]);
+    assert.deepEqual([...data.slice(64, 72)], [0, 0, 0x80, 0, 10, 0, 0x42, 4]);
+    assert.deepEqual([...data.slice(72, 80)], [25, 0, 0x82, 4, 2, 0, 0xc3, 1]);
+    assert.deepEqual(ksnakeDecodeMacroData(data)?.slice(0, 3), profiles);
+
+    const modifier = ksnakeEncodeMacroData([{
+      steps: [{ type: 1 as const, action: 1 as const, delayMs: 5, code: 2 }],
+    }]);
+    assert.deepEqual([...modifier.slice(68, 72)], [5, 0, 0xc1, 2]);
+    assert.deepEqual(ksnakeDecodeMacroData(modifier)?.[0], {
+      steps: [{ type: 1, action: 1, delayMs: 5, code: 2 }],
+    });
+
+    const request = ksnakeGetMacroChunkRequest(56, 12);
+    assert.equal(request.reportId, KSNAKE_MACRO_REPORT_ID);
+    assert.deepEqual([...request.body.slice(0, 4)], [0x0c, 12, 56, 0]);
+    const reply = new Uint8Array(64);
+    reply.set(data.slice(56, 68), 8);
+    assert.deepEqual([...ksnakeDecodeMacroChunk(reply, 12)!], [...data.slice(56, 68)]);
+
+    const chunk = ksnakeEncodeMacroChunk(64, data.slice(64, 76));
+    assert.deepEqual([...chunk.slice(0, 8)], [0x55, 0x0d, 0, 0, 12, 64, 0, 0]);
+    assert.deepEqual([...chunk.slice(8, 20)], [...data.slice(64, 76)]);
+    assert.deepEqual([...ksnakeEncodeMacroCommit().slice(0, 9)], [0x55, 0x10, 0xa5, 0x22, 0, 0, 0, 0, 5]);
   });
 
   it("writes a button map and confirms it", async () => {
@@ -385,8 +602,9 @@ describe("KsnakeHidClient writes", () => {
       { type: 32, code1: 16, code2: 0, code3: 0 },
       { type: 33, code1: 85, code2: 0, code3: 0 },
       { type: 33, code1: 56, code2: 1, code3: 0 },
+      { type: 33, code1: 56, code2: 255, code3: 0 },
     ];
-    const next = device.keys.slice(0, 6).map((key) => ({ ...key }));
+    const next = device.keys.map((key) => ({ ...key }));
     next[4] = { type: 48, code1: 233, code2: 0, code3: 0 }; // Forward -> Volume+
     const returned = await fastClient(device).setKeys(next);
     assert.deepEqual(returned, next);
@@ -394,11 +612,20 @@ describe("KsnakeHidClient writes", () => {
     assert.ok(device.sent.includes(0x09));
   });
 
-  it("refuses to overwrite macro bindings", async () => {
+  it("preserves macro bindings while remapping another button", async () => {
     const device = new FakeKsnakeDevice();
-    const next = device.keys.slice(0, 6).map((key) => ({ ...key }));
-    await assert.rejects(() => fastClient(device).setKeys(next), /not remappable/);
-    assert.ok(!device.sent.includes(0x09));
+    await fastClient(device).setButtonMapping("Backward", "Volume +");
+    assert.deepEqual(device.keys[3], { type: 48, code1: 233, code2: 0, code3: 0 });
+    assert.deepEqual(device.keys[4], { type: 112, code1: 0, code2: 1, code3: 3 });
+    assert.ok(device.sent.includes(0x09));
+  });
+
+  it("remaps a wheel slot without touching the fixed DPI or opposite wheel slot", async () => {
+    const device = new FakeKsnakeDevice();
+    await fastClient(device).setButtonMapping("Scroll up", "DPI +");
+    assert.deepEqual(device.keys[5], { type: 33, code1: 85, code2: 0, code3: 0 });
+    assert.deepEqual(device.keys[6], { type: 240, code1: 1, code2: 1, code3: 0 });
+    assert.deepEqual(device.keys[7], { type: 33, code1: 56, code2: 255, code3: 0 });
   });
 
   it("skips stray zeroed reports when reading the button map", async () => {
@@ -423,11 +650,59 @@ describe("KsnakeHidClient writes", () => {
       Middle: "Middle click",
       Backward: "Backward",
       // The fake ships a macro reference here: opaque slots surface as-is.
-      Forward: "Custom (112,0,1,3)",
-      DPI: "DPI loop",
+      Forward: "Macro 1",
+      "Scroll up": "Scroll up",
+      "Scroll down": "Scroll down",
     });
     assert.ok(status.buttonOptions?.includes("Backward"));
     assert.ok(status.buttonOptions?.includes("DPI loop"));
+    assert.ok(status.buttonOptions?.includes("DPI +"));
+    assert.ok(status.buttonOptions?.includes("Escape"));
+  });
+
+  it("identifies M2-NEX as Noir Gear, exposes verified lift-off, and hides its unreadable key map", async () => {
+    const device = new FakeKsnakeDevice();
+    device.vendorId = 0xa8a4;
+    device.productName = "M2-NEX";
+    // M2-NEX replies with lodValue 1 (Low); the adjacent tail bytes are the
+    // 0xff sentinels. Keep the fixture aligned with the live receiver dump.
+    device.lodValue = 1;
+    device.keys = Array.from({ length: 8 }, () => ({ type: 0xff, code1: 0xff, code2: 0xff, code3: 0xff }));
+    const status = await fastClient(device).readStatus();
+    assert.equal(status.brand, "Noir Gear");
+    assert.equal(status.name, "M2-NEX");
+    assert.equal(status.connectionDetail, "Wired USB");
+    assert.equal(status.liftOffDistance, "Low");
+    assert.deepEqual(status.supportedLiftOffDistances, ["Low", "High"]);
+    assert.equal(status.buttonMappings, undefined);
+    assert.equal(status.ui?.showAdvancedSection, false);
+    assert.deepEqual(status.firmware, ["M2-NEX 2.1.7"]);
+
+    const receiver = new FakeKsnakeDevice();
+    receiver.productName = "M2-NEX";
+    receiver.lodValue = 1;
+    receiver.keys = Array.from({ length: 8 }, () => ({ type: 0xff, code1: 0xff, code2: 0xff, code3: 0xff }));
+    const wirelessStatus = await fastClient(receiver).readStatus();
+    assert.equal(wirelessStatus.brand, "Noir Gear");
+    assert.equal(wirelessStatus.connectionDetail, "2.4 GHz receiver");
+  });
+
+  it("opens the shared Buttons tab when M2-NEX returns a readable key map", async () => {
+    const device = new FakeKsnakeDevice();
+    device.productName = "M2-NEX";
+    device.keys = [
+      { type: 32, code1: 1, code2: 0, code3: 0 },
+      { type: 32, code1: 2, code2: 0, code3: 0 },
+      { type: 32, code1: 4, code2: 0, code3: 0 },
+      { type: 32, code1: 8, code2: 0, code3: 0 },
+      { type: 32, code1: 16, code2: 0, code3: 0 },
+      { type: 33, code1: 85, code2: 0, code3: 0 },
+      { type: 33, code1: 56, code2: 1, code3: 0 },
+      { type: 33, code1: 56, code2: 255, code3: 0 },
+    ];
+    const status = await fastClient(device).readStatus();
+    assert.equal(status.ui?.showAdvancedSection, true);
+    assert.equal(status.buttonMappings?.Forward, "Forward");
   });
 
   it("remaps one button by label through setButtonMapping", async () => {
@@ -440,6 +715,7 @@ describe("KsnakeHidClient writes", () => {
       { type: 32, code1: 16, code2: 0, code3: 0 },
       { type: 33, code1: 85, code2: 0, code3: 0 },
       { type: 33, code1: 56, code2: 1, code3: 0 },
+      { type: 33, code1: 56, code2: 255, code3: 0 },
     ];
     await fastClient(device).setButtonMapping("Forward", "Backward");
     assert.deepEqual(device.keys[4], { type: 32, code1: 8, code2: 0, code3: 0 });
