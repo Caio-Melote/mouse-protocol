@@ -22,7 +22,12 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm pack --dry-run
-      - run: npm audit --audit-level=high
+      # Audit what the published package installs. The package ships no runtime
+      # dependencies, so this only ever reports advisories in code consumers
+      # would receive; release tooling (semantic-release pulls in npm, which
+      # bundles its own dependency tree) is deliberately excluded so a vuln in
+      # some other project's bundled CLI cannot block our releases.
+      - run: npm audit --omit=dev --audit-level=high
 
   # The suite is CPU-bound and runs serially (~6 min locally, ~11 min on a
   # runner), so it is sharded across jobs instead of one long run. Each shard
