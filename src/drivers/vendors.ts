@@ -318,9 +318,11 @@ export const KEYCHRON_NAPE_HID_FILTERS: HIDDeviceFilter[] = KEYCHRON_NAPE_PRODUC
   (productId) => ({ vendorId: VENDOR_ID.keychron, productId, usagePage: 0xff60, usage: 0x61 }),
 );
 
-export const KEYCHRON_M6_HID_FILTERS: HIDDeviceFilter[] = [
-  { vendorId: VENDOR_ID.keychron, productId: 0xd060, usagePage: 0xffc1, usage: 0x01 },
-  { vendorId: VENDOR_ID.keychron, productId: 0xd029, usagePage: 0xffc1, usage: 0x01 },
+// Keychron mice and receivers on Launcher's "8k" (0xffc1) and "1k" (0x8c)
+// protocols. No product IDs: Launcher picks the protocol by collection alone.
+export const KEYCHRON_LAUNCHER_HID_FILTERS: HIDDeviceFilter[] = [
+  { vendorId: VENDOR_ID.keychron, usagePage: 0xffc1, usage: 0x01 },
+  { vendorId: VENDOR_ID.keychron, usagePage: 0x8c, usage: 0x01 },
 ];
 
 // Keychron 4K mice and their receiver. No product ID: the receiver's is unknown,
@@ -770,7 +772,7 @@ export const SUPPORTED_HID_FILTERS: HIDDeviceFilter[] = [
   ...RAZER_DEATHADDER_ESSENTIAL_FILTERS,
   ...RAZER_COBRA_FILTERS,
   ...KEYCHRON_NAPE_HID_FILTERS,
-  ...KEYCHRON_M6_HID_FILTERS,
+  ...KEYCHRON_LAUNCHER_HID_FILTERS,
   ...KEYCHRON_4K_HID_FILTERS,
   ...RAZER_REGISTRY_FILTERS,
   ...RAZER_DEATHADDER_V2_FILTERS,

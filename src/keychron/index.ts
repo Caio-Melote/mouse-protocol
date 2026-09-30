@@ -17,6 +17,117 @@ export const KEYCHRON_M6_SETTINGS_RESPONSE_REPORT_ID = 0xb6;
 export const KEYCHRON_M6_STATUS_COMMAND = 0x06;
 export const KEYCHRON_M6_STATUS_PACKET_LENGTH = 63;
 /**
+ * The M6's protocol is Launcher's "8k" one, which every Keychron mouse with a
+ * 0xffc1 collection speaks. Launcher's "1k" protocol is the same command set
+ * on usage page 0x8c: 20-byte feature report 0x51 for settings and 64-byte
+ * feature report 0x52 for buttons. Launcher prefers 0xffc1, then 0x8c, then
+ * the 4K family's 0xff0a when a device offers more than one.
+ */
+export const KEYCHRON_1K_USAGE_PAGE = 0x8c;
+export const KEYCHRON_1K_USAGE = 0x01;
+export const KEYCHRON_1K_REPORT_ID = 0x51;
+export const KEYCHRON_1K_BUTTON_REPORT_ID = 0x52;
+/** Default function Launcher's config gives a button; it also names the button. */
+export type KeychronButtonId =
+  | "left" | "right" | "middle" | "backward" | "forward"
+  | "leftTilt" | "rightTilt" | "upScroll" | "downScroll" | "leftScroll" | "rightScroll"
+  | "dpiLoop" | "pageUp" | "pageDown" | "swichLight";
+/**
+ * One row per product ID from Launcher's per-model config
+ * (launcher.keychron.com/static/device/<vid << 16 | pid>/json/v3.json), named
+ * as Launcher's product list names it. Neither says which of the two
+ * protocols a model speaks; the collection it exposes decides that.
+ */
+export interface KeychronLauncherMouse {
+  productId: number;
+  name: string;
+  /** dpi.limit */
+  dpi: readonly [min: number, max: number];
+  /** The highest rate in dpi.reportRate. */
+  maxPollingHz: number;
+  /** sys.lod stops written as the 2-bit lift-off code: [code, millimetres]. */
+  lod?: ReadonlyArray<readonly [code: number, millimetres: number]>;
+  /** sys.lod stops written as the lift-off level byte, on firmware that flags it: [level, millimetres]. */
+  lodLevels?: ReadonlyArray<readonly [level: number, millimetres: number]>;
+  /** keys: button index and its default function. */
+  buttons: ReadonlyArray<readonly [index: number, id: KeychronButtonId]>;
+  /** light: the effect codes the model offers. */
+  light?: readonly number[];
+  /** sys.disSensor: Launcher hides ripple control, angle snapping and motion sync. */
+  noSensorOptions?: true;
+}
+/**
+ * The M6 (0xd060) is the only row confirmed on hardware; its config lists 1
+ * and 2 mm, but lift-off code 3 (0.7 mm) round-tripped on the mouse too.
+ */
+export const KEYCHRON_LAUNCHER_MICE: readonly KeychronLauncherMouse[] = [
+  { productId: 0xd033, name: "Keychron M3", dpi: [100, 26000], maxPollingHz: 1000, lod: [[1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "forward"], [4, "backward"], [7, "swichLight"], [13, "downScroll"], [14, "upScroll"]], light: [1, 2, 3, 4, 5, 6] },
+  { productId: 0xd035, name: "Keychron M1", dpi: [100, 26000], maxPollingHz: 1000, lod: [[1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "forward"], [4, "backward"], [5, "forward"], [6, "backward"], [13, "downScroll"], [14, "upScroll"]], light: [1, 2, 3, 4, 5, 6] },
+  { productId: 0xd036, name: "Keychron M3 Mini", dpi: [100, 26000], maxPollingHz: 1000, lod: [[1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "forward"], [4, "backward"], [13, "downScroll"], [14, "upScroll"]] },
+  { productId: 0xd03b, name: "Keychron M2", dpi: [100, 26000], maxPollingHz: 1000, lod: [[1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "forward"], [4, "backward"], [13, "downScroll"], [14, "upScroll"]] },
+  { productId: 0xd03d, name: "Keychron M2 Mini", dpi: [100, 26000], maxPollingHz: 1000, lod: [[1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "forward"], [4, "backward"], [13, "downScroll"], [14, "upScroll"]] },
+  { productId: 0xd03f, name: "Keychron M6", dpi: [100, 26000], maxPollingHz: 1000, lod: [[1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "forward"], [4, "backward"], [8, "leftTilt"], [9, "rightTilt"], [10, "rightScroll"], [11, "leftScroll"], [13, "downScroll"], [14, "upScroll"]] },
+  { productId: 0xd043, name: "Keychron M4", dpi: [100, 26000], maxPollingHz: 1000, lod: [[1, 1], [2, 2]], buttons: [[0, "left"], [1, "right"], [2, "middle"], [3, "backward"], [4, "forward"], [7, "upScroll"], [8, "downScroll"]] },
+  { productId: 0xd044, name: "Keychron M7", dpi: [100, 26000], maxPollingHz: 1000, lod: [[1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "forward"], [4, "backward"], [7, "pageDown"], [13, "downScroll"], [14, "upScroll"]] },
+  { productId: 0xd048, name: "Keychron M5 8K", dpi: [50, 30000], maxPollingHz: 8000, lod: [[3, 0.7], [1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "backward"], [4, "forward"], [8, "downScroll"], [9, "upScroll"], [10, "rightScroll"], [11, "leftScroll"]] },
+  { productId: 0xd049, name: "Keychron M6 8K", dpi: [50, 30000], maxPollingHz: 8000, lod: [[3, 0.7], [1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "forward"], [4, "backward"], [8, "rightTilt"], [9, "leftTilt"], [10, "rightScroll"], [11, "leftScroll"], [13, "downScroll"], [14, "upScroll"]] },
+  { productId: 0xd04a, name: "Keychron M3 KM", dpi: [50, 26000], maxPollingHz: 1000, lod: [[1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "forward"], [4, "backward"], [5, "swichLight"], [6, "upScroll"], [7, "downScroll"]], light: [1, 2, 3, 4, 5, 6] },
+  { productId: 0xd04c, name: "Keychron M3 Combo", dpi: [50, 12000], maxPollingHz: 1000, buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "forward"], [4, "backward"], [5, "pageDown"], [6, "upScroll"], [7, "downScroll"]], noSensorOptions: true },
+  { productId: 0xd04d, name: "Keychron M2 Mini Combo", dpi: [50, 26000], maxPollingHz: 1000, lod: [[1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "backward"], [4, "forward"], [6, "upScroll"], [7, "downScroll"]] },
+  { productId: 0xd04e, name: "Keychron M3 Combo", dpi: [50, 12000], maxPollingHz: 1000, buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "forward"], [4, "backward"], [5, "pageDown"], [6, "upScroll"], [7, "downScroll"]], noSensorOptions: true },
+  { productId: 0xd04f, name: "Keychron M3 Mini", dpi: [50, 12000], maxPollingHz: 1000, buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "forward"], [4, "backward"], [6, "upScroll"], [7, "downScroll"]], noSensorOptions: true },
+  { productId: 0xd050, name: "Keychron M3 8K", dpi: [50, 30000], maxPollingHz: 8000, lod: [[3, 0.7], [1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "backward"], [4, "forward"], [7, "pageDown"], [13, "downScroll"], [14, "upScroll"]] },
+  { productId: 0xd051, name: "Keychron M3 Mini 8K", dpi: [50, 30000], maxPollingHz: 8000, lod: [[3, 0.7], [1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "backward"], [4, "forward"], [13, "downScroll"], [14, "upScroll"]] },
+  { productId: 0xd052, name: "Keychron M2 8K", dpi: [50, 30000], maxPollingHz: 8000, lod: [[3, 0.7], [1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "backward"], [4, "forward"], [13, "downScroll"], [14, "upScroll"]] },
+  { productId: 0xd053, name: "Keychron M4 8K", dpi: [50, 30000], maxPollingHz: 8000, lod: [[3, 0.7], [1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "backward"], [4, "forward"], [7, "upScroll"], [8, "downScroll"]] },
+  { productId: 0xd054, name: "Keychron M1 8K", dpi: [50, 30000], maxPollingHz: 8000, lod: [[3, 0.7], [1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "forward"], [4, "backward"], [5, "pageUp"], [6, "pageDown"], [13, "upScroll"], [14, "downScroll"]] },
+  { productId: 0xd055, name: "Keychron M2 Mini 8K", dpi: [50, 30000], maxPollingHz: 8000, lod: [[3, 0.7], [1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "backward"], [4, "forward"], [13, "downScroll"], [14, "upScroll"]] },
+  { productId: 0xd056, name: "Keychron M7 8K", dpi: [50, 30000], maxPollingHz: 8000, lod: [[3, 0.7], [1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "backward"], [4, "forward"], [7, "pageDown"], [13, "downScroll"], [14, "upScroll"]] },
+  { productId: 0xd058, name: "Keychron BM22", dpi: [100, 2400], maxPollingHz: 1000, buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "backward"], [4, "forward"], [5, "dpiLoop"], [6, "upScroll"], [7, "downScroll"]], noSensorOptions: true },
+  { productId: 0xd059, name: "Keychron M1", dpi: [100, 26000], maxPollingHz: 1000, lod: [[1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "forward"], [4, "backward"], [5, "forward"], [6, "backward"], [13, "downScroll"], [14, "upScroll"]], light: [1, 2, 3, 4, 5, 6] },
+  { productId: 0xd060, name: "Keychron M6", dpi: [100, 26000], maxPollingHz: 1000, lod: [[3, 0.7], [1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "backward"], [4, "forward"], [8, "rightTilt"], [9, "leftTilt"], [10, "rightScroll"], [11, "leftScroll"], [13, "downScroll"], [14, "upScroll"]] },
+  { productId: 0xd061, name: "Keychron BM24", dpi: [100, 2400], maxPollingHz: 1000, buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "backward"], [4, "forward"], [5, "dpiLoop"], [6, "upScroll"], [7, "downScroll"]], noSensorOptions: true },
+  { productId: 0xd062, name: "Keychron BM25", dpi: [100, 2400], maxPollingHz: 1000, buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "backward"], [4, "forward"], [5, "dpiLoop"], [6, "upScroll"], [7, "downScroll"]], noSensorOptions: true },
+  { productId: 0xd063, name: "Keychron BM26", dpi: [100, 2400], maxPollingHz: 1000, buttons: [[0, "left"], [1, "middle"], [2, "right"], [6, "upScroll"], [7, "downScroll"]], noSensorOptions: true },
+  { productId: 0xd064, name: "Keychron M6", dpi: [50, 12000], maxPollingHz: 1000, buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "backward"], [4, "forward"], [8, "rightTilt"], [9, "leftTilt"], [10, "rightScroll"], [11, "leftScroll"], [13, "downScroll"], [14, "upScroll"]], noSensorOptions: true },
+  { productId: 0xd067, name: "Keychron M6 SE", dpi: [50, 12000], maxPollingHz: 1000, buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "backward"], [4, "forward"], [8, "rightTilt"], [9, "leftTilt"], [10, "rightScroll"], [11, "leftScroll"], [13, "downScroll"], [14, "upScroll"]], noSensorOptions: true },
+  { productId: 0xd068, name: "Keychron M5", dpi: [50, 12000], maxPollingHz: 1000, buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "forward"], [4, "backward"], [10, "rightScroll"], [11, "leftScroll"], [13, "upScroll"], [14, "downScroll"]], noSensorOptions: true },
+  { productId: 0xd069, name: "Keychron M7", dpi: [50, 12000], maxPollingHz: 1000, buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "forward"], [4, "backward"], [7, "pageDown"], [13, "upScroll"], [14, "downScroll"]], noSensorOptions: true },
+  { productId: 0xd06b, name: "Keychron LM7", dpi: [50, 26000], maxPollingHz: 8000, lod: [[1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "backward"], [4, "forward"], [7, "upScroll"], [8, "downScroll"]] },
+  { productId: 0xd06c, name: "Keychron LM7 Ultra", dpi: [50, 30000], maxPollingHz: 8000, lod: [[3, 0.7], [1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "backward"], [4, "forward"], [7, "upScroll"], [8, "downScroll"]] },
+  { productId: 0xd06d, name: "Keychron G4", dpi: [50, 30000], maxPollingHz: 8000, lod: [[3, 0.7], [1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "backward"], [4, "forward"], [13, "downScroll"], [14, "upScroll"]] },
+  { productId: 0xd06e, name: "Keychron G3", dpi: [50, 30000], maxPollingHz: 8000, lod: [[3, 0.7], [1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "backward"], [4, "forward"], [7, "upScroll"], [8, "downScroll"]] },
+  { productId: 0xd06f, name: "Keychron G5", dpi: [50, 30000], maxPollingHz: 8000, lod: [[3, 0.7], [1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "backward"], [4, "forward"], [7, "upScroll"], [8, "downScroll"]] },
+  { productId: 0xd070, name: "Keychron BM27", dpi: [100, 2400], maxPollingHz: 1000, buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "forward"], [4, "backward"], [7, "dpiLoop"], [13, "upScroll"], [14, "downScroll"]], noSensorOptions: true },
+  { productId: 0xd073, name: "Keychron M5 SE", dpi: [100, 2400], maxPollingHz: 1000, buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "forward"], [4, "backward"], [7, "dpiLoop"], [13, "upScroll"], [14, "downScroll"]], noSensorOptions: true },
+  { productId: 0xd074, name: "Keychron G3 HE", dpi: [50, 30000], maxPollingHz: 8000, lod: [[3, 0.7], [1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "backward"], [4, "forward"], [7, "upScroll"], [8, "downScroll"]] },
+  { productId: 0xd075, name: "Keychron M8", dpi: [50, 30000], maxPollingHz: 8000, lod: [[3, 0.7], [1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "backward"], [4, "forward"], [7, "upScroll"], [8, "downScroll"]] },
+  { productId: 0xd076, name: "Keychron M3 V2", dpi: [50, 26000], maxPollingHz: 8000, lod: [[1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "forward"], [4, "backward"], [5, "upScroll"], [6, "downScroll"]], light: [1, 2, 3] },
+  { productId: 0xd079, name: "Keychron BM28", dpi: [100, 2400], maxPollingHz: 1000, buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "forward"], [4, "backward"], [7, "dpiLoop"], [13, "upScroll"], [14, "downScroll"]], noSensorOptions: true },
+  { productId: 0xd080, name: "Keychron G4 HE", dpi: [50, 30000], maxPollingHz: 8000, lod: [[3, 0.7], [1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "backward"], [4, "forward"], [7, "upScroll"], [8, "downScroll"]] },
+  { productId: 0xd082, name: "Keychron BM28 8K", dpi: [50, 6000], maxPollingHz: 8000, buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "backward"], [4, "forward"], [5, "dpiLoop"], [10, "rightScroll"], [11, "leftScroll"], [13, "upScroll"], [14, "downScroll"]], noSensorOptions: true },
+  { productId: 0xd083, name: "Keychron G3 HE", dpi: [50, 40000], maxPollingHz: 8000, lod: [[3, 0.7], [1, 1], [2, 2]], lodLevels: [[2, 0.9], [3, 1.2], [4, 1.4], [5, 1.6]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "backward"], [4, "forward"], [7, "upScroll"], [8, "downScroll"]] },
+  { productId: 0xd084, name: "Keychron T1 HE", dpi: [100, 2400], maxPollingHz: 1000, buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "forward"], [4, "backward"], [7, "dpiLoop"], [13, "upScroll"], [14, "downScroll"]], noSensorOptions: true },
+  { productId: 0xd086, name: "Keychron G6 HE 8K", dpi: [50, 40000], maxPollingHz: 8000, lodLevels: [[1, 0.7], [2, 0.8], [3, 0.9], [4, 1], [5, 1.1], [6, 1.2], [7, 1.3], [8, 1.4], [9, 1.5], [10, 1.6], [11, 1.7]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "forward"], [4, "backward"], [13, "upScroll"], [14, "downScroll"]] },
+  { productId: 0xd087, name: "Keychron G5 HE", dpi: [50, 40000], maxPollingHz: 8000, lod: [[3, 0.7], [1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "backward"], [4, "forward"], [7, "upScroll"], [8, "downScroll"]] },
+  { productId: 0xd08a, name: "Keychron M6 HE 8K", dpi: [50, 30000], maxPollingHz: 8000, lod: [[3, 0.7], [1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "forward"], [4, "backward"], [8, "rightTilt"], [9, "leftTilt"], [10, "rightScroll"], [11, "leftScroll"], [13, "downScroll"], [14, "upScroll"]] },
+  { productId: 0xd08c, name: "Keychron G10 HE", dpi: [50, 30000], maxPollingHz: 8000, lod: [[3, 0.7], [1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "backward"], [4, "forward"], [7, "upScroll"], [8, "downScroll"]] },
+  { productId: 0xd091, name: "Keychron M8 HE", dpi: [50, 30000], maxPollingHz: 8000, lod: [[3, 0.7], [1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "backward"], [4, "forward"], [7, "upScroll"], [8, "downScroll"]] },
+  { productId: 0xd092, name: "Keychron G9 HE 8K", dpi: [50, 30000], maxPollingHz: 8000, lod: [[3, 0.7], [1, 1], [2, 2]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "backward"], [4, "forward"], [7, "upScroll"], [8, "downScroll"]] },
+  { productId: 0xd09d, name: "Keychron G6 HE 8K", dpi: [50, 40000], maxPollingHz: 8000, lodLevels: [[1, 0.7], [2, 0.8], [3, 0.9], [4, 1], [5, 1.1], [6, 1.2], [7, 1.3], [8, 1.4], [9, 1.5], [10, 1.6], [11, 1.7]], buttons: [[0, "left"], [1, "middle"], [2, "right"], [3, "forward"], [4, "backward"], [13, "upScroll"], [14, "downScroll"]] },
+];
+/** Receivers in Launcher's product list (category "Bridge"). */
+export const KEYCHRON_RECEIVERS = new Map<number, string>([
+  [0xd024, "CANDYSIGN Link"],
+  [0xd026, "Keychron Link-KM"],
+  [0xd027, "Keychron Receiver"],
+  [0xd028, "Keychron Ultra-Link 8K"],
+  [0xd029, "Keychron Link-KM Type C"],
+  [0xd030, "Keychron Link Type A"],
+  [0xd031, "Keychron Link Type C"],
+  [0xd05a, "Keychron TurboLink 8K"],
+]);
+/**
  * Keychron's 4K mice speak Launcher's "4k" protocol on this collection: the
  * Nordic DMS v1 framing the Orbital driver also uses (64-byte report 0, 0xA1
  * checksum, 0x40 on byte 0 to route through the receiver). Decoded from
