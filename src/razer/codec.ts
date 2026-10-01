@@ -333,6 +333,128 @@ export function razerSetExtendedEffectCommand(
   };
 }
 
+/**
+ * The older Chroma lighting family (class `0x03`), from openrazer's
+ * `razer_chroma_standard_*` functions, which it sends to the Diamondback
+ * Chroma on transaction id `0xff`. Not yet confirmed on hardware by this
+ * project.
+ *
+ * The effect write names no led and carries no storage byte: one effect
+ * drives every LED on the mouse. Only the brightness pair addresses a led, the
+ * backlight, through the storage byte.
+ */
+export type RazerStandardEffect = RazerExtendedEffect | "wave";
+
+/** Effect ids from openrazer's `MATRIX_EFFECT_*` (razercommon.h). */
+export const RAZER_STANDARD_EFFECT = {
+  off: 0x00,
+  wave: 0x01,
+  reactive: 0x02,
+  breathing: 0x03,
+  spectrum: 0x04,
+  static: 0x06,
+} as const;
+
+/** Breathing's first argument: how many colours follow, or random. */
+const BREATHING_SINGLE = 0x01;
+const BREATHING_DUAL = 0x02;
+const BREATHING_RANDOM = 0x03;
+
+// ponytail: one fixed wave direction (openrazer takes 1 or 2); add a direction
+// option when the lighting card grows a control for it.
+const WAVE_DIRECTION = 0x01;
+
+/** The backlight's led id in openrazer's standard family (`BACKLIGHT_LED`). */
+const RAZER_LED_BACKLIGHT = 0x05;
+
+/** Brightness travels on a 0-255 scale; the panel works in whole percent. */
+const BRIGHTNESS_SCALE = 255;
+
+/**
+ * Effect write (`0x03`/`0x0a`) matching openrazer's
+ * `razer_chroma_standard_matrix_effect_*` byte for byte, declared data sizes
+ * included: the effect id, then that effect's own fields. Breathing always
+ * declares eight bytes, whatever its colour count, and reactive puts its speed
+ * before the colour.
+ */
+export function razerSetStandardEffectCommand(
+  effect: RazerStandardEffect,
+  options: {
+    color?: string;
+    color2?: string;
+    speed?: RazerReactiveSpeed;
+  } = {},
+): RazerCommand {
+  const command = (dataSize: number, args: number[]): RazerCommand => ({
+    commandClass: 0x03,
+    commandId: 0x0a,
+    dataSize,
+    args,
+  });
+  const color = (value: string | undefined, message: string) => {
+    if (!value) throw new RazerProtocolError(message);
+    return parseRazerColor(value);
+  };
+  switch (effect) {
+    case "off":
+      return command(0x01, [RAZER_STANDARD_EFFECT.off]);
+    case "spectrum":
+      return command(0x01, [RAZER_STANDARD_EFFECT.spectrum]);
+    case "wave":
+      return command(0x02, [RAZER_STANDARD_EFFECT.wave, WAVE_DIRECTION]);
+    case "static":
+      return command(0x04, [RAZER_STANDARD_EFFECT.static, ...color(options.color, "static needs a colour.")]);
+    case "reactive":
+      if (!options.speed) throw new RazerProtocolError("Reactive needs a speed.");
+      return command(0x05, [
+        RAZER_STANDARD_EFFECT.reactive,
+        RAZER_EFFECT_SPEED[options.speed],
+        ...color(options.color, "reactive needs a colour."),
+      ]);
+    case "breathing-random":
+      return command(0x08, [RAZER_STANDARD_EFFECT.breathing, BREATHING_RANDOM]);
+    case "breathing-single":
+      return command(0x08, [
+        RAZER_STANDARD_EFFECT.breathing,
+        BREATHING_SINGLE,
+        ...color(options.color, "Breathing single needs a colour."),
+      ]);
+    case "breathing-dual":
+      return command(0x08, [
+        RAZER_STANDARD_EFFECT.breathing,
+        BREATHING_DUAL,
+        ...color(options.color, "Breathing dual needs two colours."),
+        ...color(options.color2, "Breathing dual needs two colours."),
+      ]);
+  }
+}
+
+/** Backlight brightness read (`0x03`/`0x83`); the level answers in the third byte. */
+export const RAZER_BACKLIGHT_BRIGHTNESS_READ: RazerCommand = {
+  commandClass: 0x03,
+  commandId: 0x83,
+  dataSize: 0x03,
+  args: [RAZER_STORAGE, RAZER_LED_BACKLIGHT],
+};
+
+/** Backlight brightness write (`0x03`/`0x03`), in the same layout the read answers. */
+export function razerSetBacklightBrightnessCommand(percent: number): RazerCommand {
+  if (!Number.isInteger(percent) || percent < 0 || percent > 100) {
+    throw new RazerProtocolError("Brightness must be a whole percentage from 0 to 100.");
+  }
+  return {
+    commandClass: 0x03,
+    commandId: 0x03,
+    dataSize: 0x03,
+    args: [RAZER_STORAGE, RAZER_LED_BACKLIGHT, Math.round((percent * BRIGHTNESS_SCALE) / 100)],
+  };
+}
+
+/** Whole percent; every whole percent survives the 0-255 round trip unchanged. */
+export function decodeBacklightBrightness(args: Uint8Array): number {
+  return Math.round((args[2] * 100) / BRIGHTNESS_SCALE);
+}
+
 export class RazerProtocolError extends Error {
   readonly status: number | null;
   /**

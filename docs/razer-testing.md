@@ -376,9 +376,11 @@ What is deliberately **not** attempted on an untested model:
   `asymmetricLiftOff` is set, which only the four Viper V2/V3 Pro ids have. An
   untested mouse that answers class `0x0b` still gets the plain three-stop
   tracking control, which costs reads only.
-- Lighting, button mapping and macros. The generic driver implements none of
-  them for any model — the only lighting controls anywhere in this project are
-  the dedicated Cobra and Viper Mini drivers.
+- Lighting, button mapping and macros. Macros are not implemented for any
+  Razer model. Lighting and button mapping are per-product allowlists
+  (`standardMatrixLighting`, `buttonMapping`) that only list models someone
+  has connected; beyond them, the only lighting controls are the dedicated
+  Cobra and Viper Mini drivers.
 
 To promote a model to verified:
 
@@ -869,3 +871,46 @@ other effects also use `0x3f`, but every other Cobra effect answers on `0x1f`
 and breathing does too, so the single `0x1f` choice holds.
 
 Brightness is not implemented: this driver covers effects and colour only.
+
+## Diamondback Chroma (`1532:004c`)
+
+Driven by the generic `RazerHidClient` on transaction id `0xff`. Verified on
+firmware 1.0 over the cable, through OpenMouse Bridge on Windows: identity,
+DPI and legacy polling read back, and an 800 DPI and a 1000 Hz write each
+round-tripped and were restored. The report is in
+`captures/razer-diamondback-chroma/`.
+
+It is the one model this driver lights, through openrazer's older
+standard-matrix family, and **the lighting has not been tried on hardware
+yet**:
+
+| Write | Class / ID | Notes |
+| --- | --- | --- |
+| Off / Spectrum / Wave / Static / Reactive / Breathing | `0x03` / `0x0a` | effect id first, no storage byte or led; one effect drives every LED |
+| Backlight brightness | `0x03` / `0x03` | storage byte, backlight led (`0x05`), level on a 0-255 scale |
+
+| Read | Class / ID | Notes |
+| --- | --- | --- |
+| Backlight brightness | `0x03` / `0x83` | level in the third byte |
+
+The effect write has no read-back, so the panel shows the last effect it wrote
+and marks the card write-only. Brightness is read on every refresh and
+confirmed after each write. Wave always runs in direction `0x01`.
+
+openrazer sends all of these on `0xff` except breathing, which it lists on
+`0x3f` in the same block where it lists the Cobra. The Cobra's breathing
+answered on its usual id, so breathing goes out on `0xff` here too. **If
+breathing alone fails, that is the first thing to change.**
+
+To test the lighting, with Synapse quit:
+
+1. Open the Lighting tab and note the brightness it reads.
+2. Pick each effect and watch the mouse: Off, Spectrum, Wave, Static, Reactive
+   (click to trigger it), and the three breathing modes.
+3. Change the Static colour, the Reactive speed and both Breathing dual
+   colours.
+4. Change the brightness, reload, and confirm the new level reads back.
+5. Unplug the mouse and plug it back in, and note whether the effect and the
+   brightness survived. Nothing reads the effect back, so this is the only way
+   to learn whether it is stored.
+6. Report any effect that errors or leaves the LEDs unchanged.

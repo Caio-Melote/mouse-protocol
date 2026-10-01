@@ -91,6 +91,16 @@ export interface RazerProduct {
    * comes back populated.
    */
   buttonMapping?: boolean;
+  /**
+   * The older Chroma lighting commands (class `0x03`: the `0x0a` effect write
+   * and the backlight brightness pair). OpenRazer drives some Chroma-era mice
+   * this way and others through the extended matrix or plain led commands, and
+   * nothing on the wire says which, so this is an allowlist like
+   * `buttonMapping`. The effect write has no read-back, so a mouse that
+   * accepts it and ignores it would look exactly like one that obeys; only a
+   * hardware run can tell.
+   */
+  standardMatrixLighting?: boolean;
   /** Also accept a vendor-defined collection as the control interface. */
   vendorControlInterface?: boolean;
   /** DPI storage selector; some generations use the no-store command form. */
@@ -445,8 +455,9 @@ const PRODUCT_DEFINITIONS: ReadonlyArray<[number, Omit<RazerProduct, "transactio
   // Windows: identity, DPI (1800) and polling (500 Hz) read back, and 800 DPI
   // and 1000 Hz each wrote, read back and were restored. The polling sampler
   // saw dropouts, so the rate was read back but not measured. The stage read
-  // gave nothing usable, so no stage editor is offered.
-  [0x004c, { model: "Diamondback Chroma", ...STANDARD, verified: true }],
+  // gave nothing usable, so no stage editor is offered. Lighting follows
+  // OpenRazer's standard-matrix commands and has not been tried on it yet.
+  [0x004c, { model: "Diamondback Chroma", ...STANDARD, verified: true, standardMatrixLighting: true }],
   [0x004f, { model: "DeathAdder 2000", ...STANDARD, maxDpi: 2000 }],
   [0x0050, { model: "Naga Hex V2", ...STANDARD }],
   [0x0053, { model: "Naga Chroma", ...STANDARD }],

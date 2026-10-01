@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { MouseLighting } from "../mouse-types.ts";
 
 // `hid.ts` schedules its inter-exchange delay through `window`, which node does
 // not provide. The global carries the same `setTimeout`.
@@ -913,4 +914,110 @@ test("a Chrome-refused feature-report write surfaces troubleshooting, not the ba
     assert.match(error.message, /other Razer Viper interface/);
     return true;
   });
+});
+
+/**
+ * A Chroma-era wired mouse: firmware, DPI and legacy polling, plus the
+ * standard-matrix effect write and the backlight brightness pair (`0x03`).
+ * Brightness is held on the mouse's 0-255 scale; `ignoreWrites` acknowledges
+ * a brightness write and keeps the old level.
+ */
+function fakeChromaMouse(options: { productId?: number; brightness?: number; ignoreWrites?: boolean } = {}) {
+  const sent: Uint8Array[] = [];
+  let level = options.brightness ?? 0xff;
+  let pending = new Uint8Array(RAZER_PACKET_LENGTH);
+  const device = {
+    vendorId: 0x1532,
+    productId: options.productId ?? 0x004c,
+    productName: "Razer Diamondback Chroma",
+    opened: true,
+    collections: [{ usagePage: 0x01, usage: 0x02, children: [], featureReports: [], inputReports: [], outputReports: [] }],
+    open: async () => {},
+    close: async () => {},
+    sendFeatureReport: async (_reportId: number, data: Uint8Array) => {
+      sent.push(data);
+      const [commandClass, commandId] = [data[6], data[7]];
+      const answer = (dataSize: number, args: number[]) =>
+        replyPacket(commandClass, commandId, dataSize, args, RAZER_STATUS.ok);
+      if (commandClass === 0x00 && commandId === 0x81) pending = answer(0x02, [1, 0]);
+      else if (commandClass === 0x04 && commandId === 0x85) pending = answer(0x07, [0x01, 0x07, 0x08, 0x07, 0x08]);
+      else if (commandClass === 0x00 && commandId === 0x85) pending = answer(0x01, [2]);
+      else if (commandClass === 0x03 && commandId === 0x0a) pending = answer(data[5], [...data.slice(8, 8 + data[5])]);
+      else if (commandClass === 0x03 && commandId === 0x03) {
+        if (!options.ignoreWrites) level = data[10];
+        pending = answer(0x03, [data[8], data[9], data[10]]);
+      } else if (commandClass === 0x03 && commandId === 0x83) pending = answer(0x03, [data[8], data[9], level]);
+      else pending = replyPacket(commandClass, commandId, data[5], [], RAZER_STATUS.unsupported);
+    },
+    receiveFeatureReport: async () => new DataView(pending.buffer.slice(0)),
+  } as unknown as HIDDevice;
+  return { client: new RazerHidClient(device), sent };
+}
+
+test("the Diamondback Chroma offers its lighting with the brightness it reports", async () => {
+  const { client } = fakeChromaMouse({ brightness: 0x80 });
+
+  const { lighting } = await client.readStatus();
+
+  assert.equal(lighting?.zone, "Mouse");
+  assert.ok(lighting?.modes.includes("Wave"));
+  assert.equal(lighting?.brightness, 50);
+  // The effect has no read, so nothing claims to know the running one.
+  assert.equal(lighting?.mode, null);
+  assert.equal(lighting?.writeOnly, true);
+});
+
+test("a Razer model off the lighting allowlist is never sent a lighting command", async () => {
+  // Arrange: 0x0043 is the DeathAdder Chroma, same generation, not listed.
+  const { client, sent } = fakeChromaMouse({ productId: 0x0043 });
+
+  const status = await client.readStatus();
+
+  assert.equal(status.lighting, undefined);
+  assert.equal(sent.some((packet) => packet[6] === 0x03), false);
+  await assert.rejects(
+    client.setLighting({ zone: "Mouse", mode: "Static", color: "#ffffff" } as MouseLighting),
+    /does not support changing the lighting/,
+  );
+  assert.equal(sent.some((packet) => packet[6] === 0x03), false);
+});
+
+test("an effect change sends one standard-matrix write and leaves an unchanged brightness alone", async () => {
+  const { client, sent } = fakeChromaMouse();
+  const { lighting } = await client.readStatus();
+  sent.length = 0;
+
+  await client.setLighting({ ...lighting!, mode: "Static", color: "#ff8000" });
+
+  // On the product's own 0xff id, not the driver default.
+  assert.deepEqual(sent.map((packet) => [packet[1], packet[6], packet[7]]), [[0xff, 0x03, 0x0a]]);
+  assert.deepEqual([...sliceArgs(sent[0], 0, 4)], [0x06, 0xff, 0x80, 0x00]);
+  // Write-only: the next status read reports the cached effect.
+  assert.equal((await client.readStatus()).lighting?.mode, "Static");
+});
+
+test("a brightness change is written to the backlight and confirmed by reading it back", async () => {
+  const { client, sent } = fakeChromaMouse();
+  const { lighting } = await client.readStatus();
+  sent.length = 0;
+
+  const result = await client.setLighting({ ...lighting!, mode: "Spectrum", brightness: 50 });
+
+  assert.deepEqual(sent.map((packet) => [packet[6], packet[7]]), [[0x03, 0x0a], [0x03, 0x03], [0x03, 0x83]]);
+  assert.deepEqual([...sliceArgs(sent[1], 0, 3)], [0x01, 0x05, 0x80]);
+  assert.equal(result.brightness, 50);
+});
+
+test("a brightness the mouse does not keep is reported, and the effect it did take stays cached", async () => {
+  const { client } = fakeChromaMouse({ ignoreWrites: true });
+  const { lighting } = await client.readStatus();
+
+  await assert.rejects(
+    client.setLighting({ ...lighting!, mode: "Spectrum", brightness: 50 }),
+    /kept 100% brightness instead of 50%/,
+  );
+
+  const after = (await client.readStatus()).lighting;
+  assert.equal(after?.mode, "Spectrum");
+  assert.equal(after?.brightness, 100);
 });
