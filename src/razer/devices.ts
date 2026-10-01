@@ -441,7 +441,12 @@ const PRODUCT_DEFINITIONS: ReadonlyArray<[number, Omit<RazerProduct, "transactio
   [0x0045, { model: "Mamba", ...STANDARD_WIRELESS }],
   [0x0046, { model: "Mamba Tournament Edition", ...STANDARD }],
   [0x0048, { model: "Orochi (Wired)", ...STANDARD, maxDpi: DPI_PRE_CHROMA }],
-  [0x004c, { model: "Diamondback Chroma", ...STANDARD }],
+  // Verified on firmware 1.0 over the cable, through OpenMouse Bridge on
+  // Windows: identity, DPI (1800) and polling (500 Hz) read back, and 800 DPI
+  // and 1000 Hz each wrote, read back and were restored. The polling sampler
+  // saw dropouts, so the rate was read back but not measured. The stage read
+  // gave nothing usable, so no stage editor is offered.
+  [0x004c, { model: "Diamondback Chroma", ...STANDARD, verified: true }],
   [0x004f, { model: "DeathAdder 2000", ...STANDARD, maxDpi: 2000 }],
   [0x0050, { model: "Naga Hex V2", ...STANDARD }],
   [0x0053, { model: "Naga Chroma", ...STANDARD }],

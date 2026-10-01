@@ -25,6 +25,7 @@ Identifiers verified on hardware:
 - `1532:00a3` — Cobra, wired (separate driver)
 - `1532:00b6` — DeathAdder V3 Pro, wired (firmware 2.1)
 - `1532:00b7` — DeathAdder V3 Pro, stock HyperSpeed receiver (firmware 2.1)
+- `1532:004c`: Diamondback Chroma, wired (firmware 1.0, through OpenMouse Bridge)
 
 Mouse Dock Pro uses the same 90-byte protocol as the paired mouse. It has no
 fixed polling list: if the paired mouse answers the extended polling command it
