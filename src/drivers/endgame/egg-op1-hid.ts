@@ -1,7 +1,9 @@
 import type { MouseStatus } from "../mouse-types.ts";
 import {
+  EGG_4K_DONGLE_PID,
   EGG_4K_OFFSET,
   EGG_4K_POLLING_RATES,
+  EGG_4K_V1_POLLING_RATES,
   EGG_BUTTON_ACTION_OPTIONS,
   EGG_COMMAND_SIZE,
   EGG_CONFIG_SIZE,
@@ -88,9 +90,11 @@ export class EggOp1HidClient {
   private configPayloadLength = EGG_CONFIG_SIZE - 1;
   private commandPayloadLength = EGG_COMMAND_SIZE - 1;
   private firmwareVersion: string | null | undefined;
-  private pairedName: string | undefined;
+  /** False on the shared 4K dongle until the mouse-info reply says which mouse is paired. */
+  private modelKnown: boolean;
 
-  readonly profile: EggDeviceProfile;
+  /** On the shared 4K dongle, switches to the paired mouse's profile once it is identified. */
+  profile: EggDeviceProfile;
   onDeviceChange?: () => void;
 
   private readonly onInputReport = (event: HIDInputReportEvent): void => {
@@ -104,6 +108,7 @@ export class EggOp1HidClient {
   constructor(device: HIDDevice) {
     this.device = device;
     this.profile = eggProfileForPid(device.productId);
+    this.modelKnown = device.productId !== EGG_4K_DONGLE_PID;
   }
 
   static isSupported(device: HIDDevice): boolean {
@@ -143,6 +148,8 @@ export class EggOp1HidClient {
 
   async readStatus(): Promise<EggOp1Status> {
     const config = await this.readConfig();
+    // Retried on each read until the mouse answers: over the dongle it sleeps quickly.
+    if (!this.modelKnown) await this.run(() => this.identifyPairedMouse()).catch(() => undefined);
     const cpiLevels = Math.min(Math.max(config[EGG_OFFSET.cpiLevels], 1), 4);
     // Firmware does not persist the currently selected runtime stage. Stage 1
     // is the stable representative for the generic DPI readout; the complete
@@ -155,10 +162,6 @@ export class EggOp1HidClient {
     if (this.firmwareVersion === undefined) {
       this.firmwareVersion = await this.readFirmware().catch(() => null);
     }
-    // Retried on each read until the mouse answers: over the dongle it sleeps quickly.
-    if (this.profile.wireless4k && this.pairedName === undefined) {
-      this.pairedName = await this.readPairedName().catch(() => undefined);
-    }
     const glassMode = this.profile.lodGlass !== null && config[EGG_OFFSET.glassMode] !== 0;
     const lodOptions = eggLodOptions(this.profile, glassMode);
     const lodIndex = config[EGG_OFFSET.lod] - this.lodBase(glassMode);
@@ -168,7 +171,7 @@ export class EggOp1HidClient {
       this.decodePhysicalButtonAction(config, index as EggButtonIndex, leftHanded));
     return {
       brand: "Endgame Gear",
-      name: this.pairedName ?? this.profile.name,
+      name: this.profile.name,
       batteryPercent: null,
       batteryState: "Unknown",
       dpi,
@@ -184,7 +187,7 @@ export class EggOp1HidClient {
       rippleControl: config[EGG_OFFSET.rippleControl] !== 0,
       slamclickFilter: (config[EGG_OFFSET.filterFlags] & FILTER.slamclick) !== 0,
       // Bit 4 is the 4K v1's jitter filter; the 4K v2 tool never writes it.
-      motionJitterFilter: this.profile.wireless4k ? null : (config[EGG_OFFSET.filterFlags] & FILTER.motionJitter) !== 0,
+      motionJitterFilter: this.is4kV2() ? null : (config[EGG_OFFSET.filterFlags] & FILTER.motionJitter) !== 0,
       leftSpdtMode: this.decodeSpdtMode(config[EGG_OFFSET.firstButton]),
       rightSpdtMode: this.decodeSpdtMode(config[EGG_OFFSET.firstButton + BUTTON_CONFIG_SIZE]),
       eggCpiLevels: cpiLevels,
@@ -248,7 +251,7 @@ export class EggOp1HidClient {
 
   /** The 4K v2 takes only its vendor enum values; wired 8K models use any 8000 / rate divider. */
   supportedPollingRates(): number[] {
-    if (this.profile.wireless4k) return [...EGG_4K_POLLING_RATES];
+    if (this.profile.wireless4k) return [...(this.is4kV2() ? EGG_4K_POLLING_RATES : EGG_4K_V1_POLLING_RATES)];
     return EGG_POLLING_RATES.filter((rate) => rate <= this.profile.maxPollingHz);
   }
 
@@ -360,7 +363,7 @@ export class EggOp1HidClient {
   }
 
   async setMotionJitterFilter(enabled: boolean): Promise<void> {
-    if (this.profile.wireless4k) throw new Error(`${this.profile.name} has no motion-jitter filter.`);
+    if (this.is4kV2()) throw new Error(`${this.profile.name} has no motion-jitter filter.`);
     await this.setFilterFlag(FILTER.motionJitter, enabled, "motion-jitter filter");
   }
 
@@ -493,9 +496,13 @@ export class EggOp1HidClient {
     return this.profile.wireless4k ? EGG_4K_OFFSET.angleTuning : EGG_OFFSET.angleTuning;
   }
 
-  /** 4K v2 glass-mode LOD is stored as whole millimetres, so option 0 (1.0 mm) is wire value 1. */
+  /** 4K v1 LOD, and 4K v2 glass-mode LOD, is stored as whole millimetres, so option 0 (1 mm) is wire value 1. */
   private lodBase(glassMode: boolean): number {
-    return glassMode && this.profile.wireless4k ? 1 : 0;
+    return this.profile.wireless4k && (glassMode || !this.is4kV2()) ? 1 : 0;
+  }
+
+  private is4kV2(): boolean {
+    return this.profile.wireless4k === true && this.profile.configFamily === "v2";
   }
 
   private decodeInt8(value: number): number {
@@ -580,6 +587,9 @@ export class EggOp1HidClient {
 
   private updateConfig(change: (config: Uint8Array) => void): Promise<Uint8Array> {
     return this.run(async () => {
+      // v1 and v2 share the dongle but encode lift-off and polling differently: never write blind.
+      if (!this.modelKnown) await this.identifyPairedMouse();
+      if (!this.modelKnown) throw new Error("The mouse behind the dongle has not identified itself yet. Move it to wake it, then try again.");
       const config = await this.readConfigRaw();
       const before = config.slice();
       change(config);
@@ -641,10 +651,11 @@ export class EggOp1HidClient {
     if (!acknowledged) throw new Error("The EGG mouse did not acknowledge the configuration write.");
   }
 
-  /** 4K v2: send only the blocks that changed, like the vendor tool. Both button chunks go together. */
+  /** 4K v1 and v2: send only the blocks that changed, like the vendor tools. Both button chunks go together. */
   private async writeConfigBlocks(before: Uint8Array, after: Uint8Array): Promise<void> {
-    const old = eggBlockWrites(before);
-    const writes = eggBlockWrites(after);
+    const glass = this.profile.lodGlass !== null;
+    const old = eggBlockWrites(before, glass);
+    const writes = eggBlockWrites(after, glass);
     const changed = new Set(writes
       .filter((write, index) => write.payload.some((byte, i) => byte !== old[index].payload[i]))
       .map((write) => write.command));
@@ -674,28 +685,29 @@ export class EggOp1HidClient {
   }
 
   /**
-   * The dongle's USB IDs are the same whichever 4K v2 is paired; the mouse-info
-   * reply carries the mouse's own VID/PID at payload +0/+2. Undefined while the
-   * mouse does not answer, so the caller can retry.
+   * The dongle's USB IDs are the same whichever 4K mouse is paired; the
+   * mouse-info reply carries the mouse's own VID/PID at payload +0/+2, and the
+   * profile follows it because v1 and v2 encode lift-off and polling
+   * differently (re/PROTOCOL.md section 12). An unlisted PID keeps the neutral
+   * profile. Leaves modelKnown false while the mouse does not answer.
    */
-  private readPairedName(): Promise<string | undefined> {
-    return this.run(async () => {
-      await this.open();
-      await this.sendCommand(EGG_OPERATION.mouseInfo);
-      // The vendor tool's settle and busy back-off (PROTOCOL.md section 2).
-      await this.delay(150);
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        const reply = (await this.receiveFeature(EGG_REPORT.command, EGG_COMMAND_SIZE, this.commandPayloadLength)).bytes;
-        if (reply[1] === STATUS_OK && eggReadUint16LE(reply, 16) === EGG_VENDOR_ID) {
-          const paired = EGG_DEVICE_PROFILES.get(eggReadUint16LE(reply, 18));
-          return paired?.wireless4k ? paired.name : this.profile.name;
-        }
-        // An OK without our VID is the previous command's held reply: the dongle has not relayed the mouse yet.
-        if (reply[1] !== STATUS_BUSY && reply[1] !== STATUS_OK) return undefined;
-        await this.delay(200 * (attempt + 1));
+  private async identifyPairedMouse(): Promise<void> {
+    await this.open();
+    await this.sendCommand(EGG_OPERATION.mouseInfo);
+    // The vendor tool's settle and busy back-off (PROTOCOL.md section 2).
+    await this.delay(150);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const reply = (await this.receiveFeature(EGG_REPORT.command, EGG_COMMAND_SIZE, this.commandPayloadLength)).bytes;
+      if (reply[1] === STATUS_OK && eggReadUint16LE(reply, 16) === EGG_VENDOR_ID) {
+        const paired = EGG_DEVICE_PROFILES.get(eggReadUint16LE(reply, 18));
+        if (paired?.wireless4k) this.profile = paired;
+        this.modelKnown = true;
+        return;
       }
-      return undefined;
-    });
+      // An OK without our VID is the previous command's held reply: the dongle has not relayed the mouse yet.
+      if (reply[1] !== STATUS_BUSY && reply[1] !== STATUS_OK) return;
+      await this.delay(200 * (attempt + 1));
+    }
   }
 
   private async sendCommand(operation: number, header: number[] = [], payload?: Uint8Array): Promise<void> {
