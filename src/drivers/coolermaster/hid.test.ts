@@ -250,6 +250,11 @@ test("CoolerMasterHidClient sets debounce time", async () => {
   const fake = new FakeCoolerMasterDevice();
   const client = new CoolerMasterHidClient(fake as unknown as HIDDevice);
 
+  assert.equal(client.getDebounceMaxMs(), 32);
+  assert.equal(client.getDebounceOptions().length, 29);
+  assert.equal(client.getDebounceOptions()[0], 4);
+  assert.equal(client.getDebounceOptions().at(-1), 32);
+
   const debounce = await client.setDebounceTime(12);
   assert.equal(debounce, 12);
 

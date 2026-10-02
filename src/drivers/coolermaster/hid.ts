@@ -94,6 +94,14 @@ export class CoolerMasterHidClient {
     return [...COOLERMASTER_POLLING_RATES];
   }
 
+  getDebounceOptions(): number[] {
+    return Array.from({ length: 29 }, (_, i) => i + 4);
+  }
+
+  getDebounceMaxMs(): number {
+    return 32;
+  }
+
   async open(): Promise<void> {
     if (!CoolerMasterHidClient.isSupported(this.device)) {
       throw new Error("Cooler Master configuration collection is unavailable.");
@@ -143,7 +151,7 @@ export class CoolerMasterHidClient {
         brand: "Cooler Master",
         name,
         ui: {
-          family: "coolermaster-mm711",
+          family: "cooler master",
           defaultDisplayName: name,
           valuesVerified: true,
           settingsReady: true,
