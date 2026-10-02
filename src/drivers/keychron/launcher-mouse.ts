@@ -166,7 +166,33 @@ export function keychronLauncherFirmware(bytes: Uint8Array): string | null {
 // Buttons ───────────────────────────────────────────────────────────────
 
 /** Launcher's EFunKey: byte 3 of a button record. */
-const BUTTON_TYPE = { default: 0, mouse: 1, media: 3, macro: 4, dpi: 5, disabled: 9 } as const;
+const BUTTON_TYPE = { default: 0, mouse: 1, media: 3, macro: 4, dpi: 5, shortcut: 8, disabled: 9, pollingRate: 13 } as const;
+
+/**
+ * Launcher's EShortcutKey, the presets its "Shortcuts" group offers for mice,
+ * written three bytes high to low like the mouse codes. Kind 0x07 carries a
+ * modifier mask (ctrl 1, shift 2, alt 4, win/cmd 8) and a HID keycode; kind
+ * 0x0c carries a consumer usage, low byte first.
+ */
+const SHORTCUT_CODE = {
+  copy: 0x070106,
+  cut: 0x07011b,
+  paste: 0x070119,
+  screenshot: 0x070a16,
+  showDesktop: 0x070807,
+  zoomIn: 0x07012e,
+  zoomOut: 0x07012d,
+  copyMac: 0x070806,
+  cutMac: 0x07081b,
+  pasteMac: 0x070819,
+  screenshotMac: 0x070a21,
+  launchpad: 0x0ca002,
+  missionControl: 0x0c9f02,
+  zoomInMac: 0x07082e,
+  zoomOutMac: 0x07082d,
+  brightnessUp: 0x0c6f00,
+  brightnessDown: 0x0c7000,
+} as const;
 
 /**
  * Launcher's EBasicKey, written as three bytes high to low. The "1k" enum
@@ -189,8 +215,12 @@ export type KeychronProtocol = "8k" | "1k";
 
 type ButtonAction = { label: string; type: number; value: number };
 
-/** Every action the remapper offers, in display order. Media codes are HID consumer usages. */
-function buttonActions(protocol: KeychronProtocol): ButtonAction[] {
+/**
+ * Every action the remapper offers, in display order. Media codes are HID
+ * consumer usages. Launcher only shows the polling-rate keys when feature
+ * byte 1 bit 4 (rewritable polling gears) is set, so they are opt-in.
+ */
+function buttonActions(protocol: KeychronProtocol, pollingKeys = true): ButtonAction[] {
   const [back, forward] = protocol === "8k"
     ? [MOUSE_CODE.back8k, MOUSE_CODE.forward8k]
     : [MOUSE_CODE.forward8k, MOUSE_CODE.back8k];
@@ -208,36 +238,61 @@ function buttonActions(protocol: KeychronProtocol): ButtonAction[] {
     { label: "DPI Loop", type: BUTTON_TYPE.dpi, value: 1 },
     { label: "DPI +", type: BUTTON_TYPE.dpi, value: 2 },
     { label: "DPI -", type: BUTTON_TYPE.dpi, value: 3 },
+    ...(pollingKeys ? [
+      { label: "Polling Loop", type: BUTTON_TYPE.pollingRate, value: 1 },
+      { label: "Polling +", type: BUTTON_TYPE.pollingRate, value: 2 },
+      { label: "Polling -", type: BUTTON_TYPE.pollingRate, value: 3 },
+    ] : []),
     { label: "Volume Up", type: BUTTON_TYPE.media, value: 0xe9 },
     { label: "Volume Down", type: BUTTON_TYPE.media, value: 0xea },
     { label: "Mute", type: BUTTON_TYPE.media, value: 0xe2 },
     { label: "Play/Pause", type: BUTTON_TYPE.media, value: 0xcd },
     { label: "Next Track", type: BUTTON_TYPE.media, value: 0xb5 },
     { label: "Previous Track", type: BUTTON_TYPE.media, value: 0xb6 },
+    { label: "Copy (Ctrl+C)", type: BUTTON_TYPE.shortcut, value: SHORTCUT_CODE.copy },
+    { label: "Cut (Ctrl+X)", type: BUTTON_TYPE.shortcut, value: SHORTCUT_CODE.cut },
+    { label: "Paste (Ctrl+V)", type: BUTTON_TYPE.shortcut, value: SHORTCUT_CODE.paste },
+    { label: "Screenshot (Win+Shift+S)", type: BUTTON_TYPE.shortcut, value: SHORTCUT_CODE.screenshot },
+    { label: "Show Desktop (Win+D)", type: BUTTON_TYPE.shortcut, value: SHORTCUT_CODE.showDesktop },
+    { label: "Zoom In (Ctrl+=)", type: BUTTON_TYPE.shortcut, value: SHORTCUT_CODE.zoomIn },
+    { label: "Zoom Out (Ctrl+-)", type: BUTTON_TYPE.shortcut, value: SHORTCUT_CODE.zoomOut },
+    { label: "Copy (Cmd+C)", type: BUTTON_TYPE.shortcut, value: SHORTCUT_CODE.copyMac },
+    { label: "Cut (Cmd+X)", type: BUTTON_TYPE.shortcut, value: SHORTCUT_CODE.cutMac },
+    { label: "Paste (Cmd+V)", type: BUTTON_TYPE.shortcut, value: SHORTCUT_CODE.pasteMac },
+    { label: "Screenshot (Cmd+Shift+4)", type: BUTTON_TYPE.shortcut, value: SHORTCUT_CODE.screenshotMac },
+    { label: "Launchpad", type: BUTTON_TYPE.shortcut, value: SHORTCUT_CODE.launchpad },
+    { label: "Mission Control", type: BUTTON_TYPE.shortcut, value: SHORTCUT_CODE.missionControl },
+    { label: "Zoom In (Cmd+=)", type: BUTTON_TYPE.shortcut, value: SHORTCUT_CODE.zoomInMac },
+    { label: "Zoom Out (Cmd+-)", type: BUTTON_TYPE.shortcut, value: SHORTCUT_CODE.zoomOutMac },
+    { label: "Brightness Up", type: BUTTON_TYPE.shortcut, value: SHORTCUT_CODE.brightnessUp },
+    { label: "Brightness Down", type: BUTTON_TYPE.shortcut, value: SHORTCUT_CODE.brightnessDown },
     { label: "Disabled", type: BUTTON_TYPE.disabled, value: 0 },
     // Launcher's "restore": the firmware's own function for that button.
     { label: "Default", type: BUTTON_TYPE.default, value: 0 },
   ];
 }
 
-export function keychronButtonOptions(protocol: KeychronProtocol): string[] {
-  return buttonActions(protocol).map(({ label }) => label);
+/** `pollingKeys` is the 8k feature flag; the 1k protocol never has it. */
+export function keychronButtonOptions(protocol: KeychronProtocol, pollingKeys = false): string[] {
+  return buttonActions(protocol, pollingKeys).map(({ label }) => label);
 }
 
 /**
  * Bytes 3 onward of a 0x52 write: the type, then the data the way Launcher
- * packs it (mouse codes three bytes high to low, media codes low byte first,
- * the DPI key as one byte).
+ * packs it (mouse and shortcut codes three bytes high to low, media codes
+ * low byte first, the DPI and polling-rate keys as one byte).
  */
 export function keychronEncodeButton(label: string, protocol: KeychronProtocol): number[] | null {
   const action = buttonActions(protocol).find((entry) => entry.label === label);
   if (!action) return null;
   switch (action.type) {
     case BUTTON_TYPE.mouse:
+    case BUTTON_TYPE.shortcut:
       return [action.type, (action.value >> 16) & 0xff, (action.value >> 8) & 0xff, action.value & 0xff];
     case BUTTON_TYPE.media:
       return [action.type, action.value & 0xff, (action.value >> 8) & 0xff];
     case BUTTON_TYPE.dpi:
+    case BUTTON_TYPE.pollingRate:
       return [action.type, action.value];
     default:
       return [action.type];
@@ -253,9 +308,10 @@ export function keychronDecodeButton(bytes: Uint8Array, protocol: KeychronProtoc
   const type = bytes[3] ?? 0;
   if (type === BUTTON_TYPE.default) return null;
   if (type === BUTTON_TYPE.macro) return "Macro";
-  const value = type === BUTTON_TYPE.mouse ? ((bytes[4] ?? 0) << 16) | ((bytes[5] ?? 0) << 8) | (bytes[6] ?? 0)
+  const value = type === BUTTON_TYPE.mouse || type === BUTTON_TYPE.shortcut
+    ? ((bytes[4] ?? 0) << 16) | ((bytes[5] ?? 0) << 8) | (bytes[6] ?? 0)
     : type === BUTTON_TYPE.media ? (bytes[4] ?? 0) | ((bytes[5] ?? 0) << 8)
-      : type === BUTTON_TYPE.dpi ? (bytes[4] ?? 0)
+      : type === BUTTON_TYPE.dpi || type === BUTTON_TYPE.pollingRate ? (bytes[4] ?? 0)
         : 0;
   return buttonActions(protocol).find((action) => action.type === type && action.value === value)?.label ?? "Custom";
 }
