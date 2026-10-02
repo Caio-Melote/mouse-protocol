@@ -1,12 +1,20 @@
-import type { MouseStatus } from "../mouse-types.ts";
+import type { MouseLighting, MouseLightingMode, MouseStatus } from "../mouse-types.ts";
 import {
+  COOLERMASTER_BREATHING_SPEED_MAP,
   COOLERMASTER_CMD_HANDSHAKE_1,
   COOLERMASTER_CMD_HANDSHAKE_2,
+  COOLERMASTER_COLOR_CYCLE_SPEED_MAP,
   COOLERMASTER_DPI_MAX,
   COOLERMASTER_DPI_MIN,
   COOLERMASTER_DPI_OPTIONS,
   COOLERMASTER_DPI_STAGE_COUNT,
   COOLERMASTER_DPI_STEP,
+  COOLERMASTER_LIGHTING_MODE_BREATH,
+  COOLERMASTER_LIGHTING_MODE_COLOR_CYCLE,
+  COOLERMASTER_LIGHTING_MODE_CUSTOM,
+  COOLERMASTER_LIGHTING_MODE_OFF,
+  COOLERMASTER_LIGHTING_MODE_STATIC,
+  COOLERMASTER_LIGHTING_ZONES,
   COOLERMASTER_POLLING_RATES,
   COOLERMASTER_PRODUCT_IDS,
   COOLERMASTER_PRODUCT_NAMES,
@@ -14,18 +22,47 @@ import {
   COOLERMASTER_USAGE,
   COOLERMASTER_USAGE_PAGE,
   COOLERMASTER_VENDOR_ID,
+  coolermasterDecodeBreathingSpeed,
+  coolermasterDecodeColorCycleSpeed,
+  coolermasterDecodeCustomEffect,
   coolermasterDecodeDebounce,
+  coolermasterDecodeEffectMode,
+  coolermasterDecodeGeneralEffect,
   coolermasterDecodePerformance,
   coolermasterDecodePollingRate,
+  coolermasterEncodeGetCustomEffect,
   coolermasterEncodeGetDebounce,
+  coolermasterEncodeGetEffectMode,
+  coolermasterEncodeGetGeneralEffect,
   coolermasterEncodeGetPerformance,
   coolermasterEncodeGetPollingRate,
   coolermasterEncodeHandshake,
+  coolermasterEncodeSetCustomEffect,
   coolermasterEncodeSetDebounce,
+  coolermasterEncodeSetEffectMode,
+  coolermasterEncodeSetGeneralEffect,
   coolermasterEncodeSetPerformance,
   coolermasterEncodeSetPollingRate,
+  coolermasterParseHexColor,
+  coolermasterToHexColor,
+  type CoolerMasterCustomEffect,
+  type CoolerMasterGeneralEffect,
+  type CoolerMasterLightingZone,
   type CoolerMasterPerformance,
 } from "@openmouse/protocol/coolermaster";
+
+const MM711_LIGHTING_MODES: readonly MouseLightingMode[] = [
+  "Static",
+  "Breathing single",
+  "Breathing random",
+  "Cycling",
+  "Off",
+];
+
+const MM711_COLOR_MODES: readonly MouseLightingMode[] = ["Static", "Breathing single"];
+const MM711_SPEED_MODES: readonly MouseLightingMode[] = ["Breathing single", "Breathing random", "Cycling"];
+const MM711_SPEEDS: readonly number[] = [1, 2, 3, 4, 5];
+const MM711_BRIGHTNESS_LEVELS: readonly number[] = [0, 25, 50, 75, 100];
 
 const RESPONSE_TIMEOUT_MS = 1000;
 
@@ -56,6 +93,10 @@ export class CoolerMasterHidClient {
   } | null = null;
   private queue: Promise<unknown> = Promise.resolve();
   private lastPerformance: CoolerMasterPerformance | null = null;
+  private lastCustomLighting: CoolerMasterCustomEffect = {
+    wheel: { r: 255, g: 0, b: 0 },
+    logo: { r: 255, g: 0, b: 0 },
+  };
 
   private readonly onInputReport = (event: HIDInputReportEvent): void => {
     if (event.reportId !== COOLERMASTER_REPORT_ID) return;
@@ -145,6 +186,14 @@ export class CoolerMasterHidClient {
         debounceMs = null;
       }
 
+      // Step 5: Read lighting
+      let lightingZones: MouseLighting[] | undefined;
+      try {
+        lightingZones = await this.readLighting();
+      } catch {
+        lightingZones = undefined;
+      }
+
       const name = COOLERMASTER_PRODUCT_NAMES.get(this.device.productId) ?? "Cooler Master MM711";
 
       return {
@@ -185,6 +234,8 @@ export class CoolerMasterHidClient {
         activeProfile: 1,
         connectionType: "Wired",
         firmware: [],
+        lighting: lightingZones?.[0],
+        lightingZones,
       };
     });
   }
@@ -353,6 +404,179 @@ export class CoolerMasterHidClient {
       const recheck = coolermasterDecodePerformance(echo);
       this.lastPerformance = recheck;
       return recheck.angleTuning;
+    });
+  }
+
+  async setLighting(lighting: MouseLighting): Promise<MouseLighting> {
+    const zoneIndex = COOLERMASTER_LIGHTING_ZONES.indexOf(
+      lighting.zone as CoolerMasterLightingZone,
+    );
+    if (zoneIndex < 0) {
+      throw new Error(`Unknown Cooler Master lighting zone: ${lighting.zone}`);
+    }
+    if (!lighting.mode) {
+      throw new Error("Choose an RGB effect first.");
+    }
+    if (!MM711_LIGHTING_MODES.includes(lighting.mode)) {
+      throw new Error(`Unsupported Cooler Master lighting mode: ${lighting.mode}`);
+    }
+
+    return await this.serialized(async () => {
+      await this.open();
+
+      if (lighting.mode === "Off") {
+        await this.exchange(coolermasterEncodeSetEffectMode(COOLERMASTER_LIGHTING_MODE_OFF));
+      } else if (lighting.mode === "Cycling") {
+        const speedLevel = Math.max(1, Math.min(5, lighting.speed ?? 3));
+        const speedCode = COOLERMASTER_COLOR_CYCLE_SPEED_MAP[speedLevel] ?? 40;
+        const brightness = Math.max(
+          0,
+          Math.min(127, Math.round(((lighting.brightness ?? 100) * 127) / 100)),
+        );
+        await this.exchange(
+          coolermasterEncodeSetGeneralEffect({
+            modeId: COOLERMASTER_LIGHTING_MODE_COLOR_CYCLE,
+            speedCode,
+            brightness,
+            color: { r: 255, g: 255, b: 255 },
+          }),
+        );
+        await this.exchange(
+          coolermasterEncodeSetEffectMode(COOLERMASTER_LIGHTING_MODE_COLOR_CYCLE),
+        );
+      } else if (
+        lighting.mode === "Breathing single" ||
+        lighting.mode === "Breathing random"
+      ) {
+        const isRandom = lighting.mode === "Breathing random";
+        const speedLevel = Math.max(1, Math.min(5, lighting.speed ?? 3));
+        const speedCode = COOLERMASTER_BREATHING_SPEED_MAP[speedLevel] ?? 49;
+        const brightness = Math.max(
+          0,
+          Math.min(255, Math.round(((lighting.brightness ?? 100) * 255) / 100)),
+        );
+        const color = isRandom
+          ? { r: 255, g: 0, b: 0 }
+          : coolermasterParseHexColor(lighting.color);
+        await this.exchange(
+          coolermasterEncodeSetGeneralEffect({
+            modeId: COOLERMASTER_LIGHTING_MODE_BREATH,
+            speedCode,
+            random: isRandom,
+            brightness,
+            color,
+          }),
+        );
+        await this.exchange(
+          coolermasterEncodeSetEffectMode(COOLERMASTER_LIGHTING_MODE_BREATH),
+        );
+      } else if (lighting.mode === "Static") {
+        const newColor = coolermasterParseHexColor(lighting.color);
+        if (lighting.zone === "Scroll wheel") {
+          this.lastCustomLighting.wheel = newColor;
+        } else {
+          this.lastCustomLighting.logo = newColor;
+        }
+        await this.exchange(
+          coolermasterEncodeSetCustomEffect(
+            this.lastCustomLighting.wheel,
+            this.lastCustomLighting.logo,
+          ),
+        );
+        await this.exchange(
+          coolermasterEncodeSetEffectMode(COOLERMASTER_LIGHTING_MODE_CUSTOM),
+        );
+      }
+
+      const refreshed = await this.readLighting();
+      return refreshed[zoneIndex]!;
+    });
+  }
+
+  private async readLighting(): Promise<MouseLighting[]> {
+    let modeId = COOLERMASTER_LIGHTING_MODE_COLOR_CYCLE;
+    try {
+      const modeReply = await this.exchange(coolermasterEncodeGetEffectMode());
+      modeId = coolermasterDecodeEffectMode(modeReply);
+    } catch {
+      // Keep default
+    }
+
+    try {
+      const customReply = await this.exchange(coolermasterEncodeGetCustomEffect());
+      this.lastCustomLighting = coolermasterDecodeCustomEffect(customReply);
+    } catch {
+      // Keep cached
+    }
+
+    let general: CoolerMasterGeneralEffect = {
+      modeId,
+      speedCode: 40,
+      random: false,
+      brightness: 255,
+      color: { r: 255, g: 0, b: 0 },
+    };
+
+    if (
+      modeId === COOLERMASTER_LIGHTING_MODE_STATIC ||
+      modeId === COOLERMASTER_LIGHTING_MODE_BREATH ||
+      modeId === COOLERMASTER_LIGHTING_MODE_COLOR_CYCLE
+    ) {
+      try {
+        const generalReply = await this.exchange(coolermasterEncodeGetGeneralEffect(modeId));
+        general = coolermasterDecodeGeneralEffect(generalReply);
+      } catch {
+        // Keep fallback
+      }
+    }
+
+    const { wheel, logo } = this.lastCustomLighting;
+
+    let activeMode: MouseLightingMode = "Cycling";
+    let speed: number | null = null;
+    let brightness = 100;
+
+    if (modeId === COOLERMASTER_LIGHTING_MODE_OFF) {
+      activeMode = "Off";
+      brightness = 0;
+    } else if (modeId === COOLERMASTER_LIGHTING_MODE_COLOR_CYCLE) {
+      activeMode = "Cycling";
+      speed = coolermasterDecodeColorCycleSpeed(general.speedCode);
+      brightness = Math.round((general.brightness * 100) / 127);
+    } else if (modeId === COOLERMASTER_LIGHTING_MODE_BREATH) {
+      activeMode = general.random ? "Breathing random" : "Breathing single";
+      speed = coolermasterDecodeBreathingSpeed(general.speedCode);
+      brightness = Math.round((general.brightness * 100) / 255);
+    } else if (modeId === COOLERMASTER_LIGHTING_MODE_CUSTOM) {
+      activeMode = "Static";
+      brightness = 100;
+    } else if (modeId === COOLERMASTER_LIGHTING_MODE_STATIC) {
+      activeMode = "Static";
+      brightness = Math.round((general.brightness * 100) / 255);
+    }
+
+    return COOLERMASTER_LIGHTING_ZONES.map((zone) => {
+      let color: string | null = null;
+      if (activeMode === "Static") {
+        color = zone === "Scroll wheel" ? coolermasterToHexColor(wheel) : coolermasterToHexColor(logo);
+      } else if (activeMode === "Breathing single") {
+        color = coolermasterToHexColor(general.color);
+      }
+
+      return {
+        zone,
+        modes: MM711_LIGHTING_MODES,
+        mode: activeMode,
+        color,
+        color2: null,
+        colorModes: MM711_COLOR_MODES,
+        dualColorModes: [],
+        reactiveModes: MM711_SPEED_MODES,
+        speeds: MM711_SPEEDS,
+        speed,
+        brightness: Math.max(0, Math.min(100, brightness)),
+        brightnessLevels: MM711_BRIGHTNESS_LEVELS,
+      };
     });
   }
 

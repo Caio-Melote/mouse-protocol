@@ -50,6 +50,42 @@ export const COOLERMASTER_SUB_PERFORMANCE = 0x40;
 export const COOLERMASTER_SUB_DPI_LEVEL = 0x9b;
 export const COOLERMASTER_SUB_POLLING = 0xf0;
 export const COOLERMASTER_SUB_DEBOUNCE = 0x10;
+export const COOLERMASTER_SUB_EFFECT_MODE = 0x28;
+export const COOLERMASTER_SUB_GENERAL_EFFECT = 0x2b;
+export const COOLERMASTER_SUB_CUSTOM_EFFECT = 0xa8;
+
+// Lighting modes
+export const COOLERMASTER_LIGHTING_MODE_STATIC = 0x00;
+export const COOLERMASTER_LIGHTING_MODE_BREATH = 0x01;
+export const COOLERMASTER_LIGHTING_MODE_COLOR_CYCLE = 0x02;
+export const COOLERMASTER_LIGHTING_MODE_INDICATOR = 0x04;
+export const COOLERMASTER_LIGHTING_MODE_CUSTOM = 0xb0;
+export const COOLERMASTER_LIGHTING_MODE_OFF = 0xfe;
+
+export const COOLERMASTER_LIGHTING_ZONES = ["Scroll wheel", "Logo"] as const;
+export type CoolerMasterLightingZone = (typeof COOLERMASTER_LIGHTING_ZONES)[number];
+
+export interface CoolerMasterRgbColor {
+  r: number;
+  g: number;
+  b: number;
+}
+
+export const COOLERMASTER_BREATHING_SPEED_MAP: Readonly<Record<number, number>> = {
+  1: 60, // 0x3c
+  2: 55, // 0x37
+  3: 49, // 0x31
+  4: 44, // 0x2c
+  5: 38, // 0x26
+};
+
+export const COOLERMASTER_COLOR_CYCLE_SPEED_MAP: Readonly<Record<number, number>> = {
+  1: 50, // 0x32
+  2: 45, // 0x2d
+  3: 40, // 0x28
+  4: 35, // 0x23
+  5: 30, // 0x1e
+};
 
 /** Polling rate code mapping (matches CMUOT toInnerPollingRate / bInterval ms). */
 export const COOLERMASTER_POLLING_RATE_MAP: Readonly<Record<number, number>> = {
@@ -388,3 +424,207 @@ export function coolermasterEncodeSetDebounce(debounceMs: number, baseFrame?: Ui
   buf[16] = debounceMs;
   return buf;
 }
+
+export function coolermasterDecodeBreathingSpeed(wireVal: number): number {
+  let bestLevel = 3;
+  let bestDiff = Infinity;
+  for (const [lvlStr, val] of Object.entries(COOLERMASTER_BREATHING_SPEED_MAP)) {
+    const diff = Math.abs(val - wireVal);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      bestLevel = Number(lvlStr);
+    }
+  }
+  return bestLevel;
+}
+
+export function coolermasterDecodeColorCycleSpeed(wireVal: number): number {
+  let bestLevel = 3;
+  let bestDiff = Infinity;
+  for (const [lvlStr, val] of Object.entries(COOLERMASTER_COLOR_CYCLE_SPEED_MAP)) {
+    const diff = Math.abs(val - wireVal);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      bestLevel = Number(lvlStr);
+    }
+  }
+  return bestLevel;
+}
+
+/** Parses #rrggbb into RGB components (defaulting to 255, 0, 0). */
+export function coolermasterParseHexColor(color: string | null | undefined): CoolerMasterRgbColor {
+  if (!color || !color.startsWith("#")) {
+    return { r: 255, g: 0, b: 0 };
+  }
+  const clean = color.slice(1);
+  if (clean.length === 6) {
+    return {
+      r: Number.parseInt(clean.slice(0, 2), 16) || 0,
+      g: Number.parseInt(clean.slice(2, 4), 16) || 0,
+      b: Number.parseInt(clean.slice(4, 6), 16) || 0,
+    };
+  }
+  return { r: 255, g: 0, b: 0 };
+}
+
+/** Formats RGB components into #rrggbb. */
+export function coolermasterToHexColor(rgb: CoolerMasterRgbColor): string {
+  const hexByte = (n: number) =>
+    Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, "0");
+  return `#${hexByte(rgb.r)}${hexByte(rgb.g)}${hexByte(rgb.b)}`;
+}
+
+/** Builds the 64-byte get effect mode request [0x52, 0x28, ...0x00]. */
+export function coolermasterEncodeGetEffectMode(): Uint8Array {
+  const buf = new Uint8Array(COOLERMASTER_PAYLOAD_SIZE);
+  buf[0] = COOLERMASTER_CMD_READ;
+  buf[1] = COOLERMASTER_SUB_EFFECT_MODE;
+  return buf;
+}
+
+/** Decodes active effect mode ID from [0x52, 0x28, ...]. Offset 4 carries mode ID. */
+export function coolermasterDecodeEffectMode(source: Uint8Array | DataView): number {
+  const payload = normalizePayload(source);
+  if (
+    (payload[0] !== COOLERMASTER_CMD_READ && payload[0] !== COOLERMASTER_CMD_WRITE) ||
+    payload[1] !== COOLERMASTER_SUB_EFFECT_MODE
+  ) {
+    throw new Error(
+      `Invalid Cooler Master effect mode reply: [0x${payload[0]?.toString(16)}, 0x${payload[1]?.toString(16)}]`,
+    );
+  }
+  return payload[4]!;
+}
+
+/** Builds the 64-byte set effect mode command [0x51, 0x28, 0x00, 0x00, modeId, ...]. */
+export function coolermasterEncodeSetEffectMode(modeId: number): Uint8Array {
+  const buf = new Uint8Array(COOLERMASTER_PAYLOAD_SIZE);
+  buf[0] = COOLERMASTER_CMD_WRITE;
+  buf[1] = COOLERMASTER_SUB_EFFECT_MODE;
+  buf[4] = modeId & 0xff;
+  return buf;
+}
+
+/** Builds the 64-byte get general effect request [0x52, 0x2b, 0x00, 0x00, modeId, ...]. */
+export function coolermasterEncodeGetGeneralEffect(modeId: number): Uint8Array {
+  const buf = new Uint8Array(COOLERMASTER_PAYLOAD_SIZE);
+  buf[0] = COOLERMASTER_CMD_READ;
+  buf[1] = COOLERMASTER_SUB_GENERAL_EFFECT;
+  buf[4] = modeId & 0xff;
+  return buf;
+}
+
+export interface CoolerMasterGeneralEffect {
+  modeId: number;
+  speedCode: number;
+  random: boolean;
+  brightness: number;
+  color: CoolerMasterRgbColor;
+}
+
+/** Decodes general effect parameters from [0x52, 0x2b, ...]. */
+export function coolermasterDecodeGeneralEffect(
+  source: Uint8Array | DataView,
+): CoolerMasterGeneralEffect {
+  const payload = normalizePayload(source);
+  if (
+    (payload[0] !== COOLERMASTER_CMD_READ && payload[0] !== COOLERMASTER_CMD_WRITE) ||
+    payload[1] !== COOLERMASTER_SUB_GENERAL_EFFECT
+  ) {
+    throw new Error(
+      `Invalid Cooler Master general effect reply: [0x${payload[0]?.toString(16)}, 0x${payload[1]?.toString(16)}]`,
+    );
+  }
+  return {
+    modeId: payload[4]!,
+    speedCode: payload[5]!,
+    random: (payload[6]! & 0x80) !== 0,
+    brightness: payload[9]!,
+    color: {
+      r: payload[10]!,
+      g: payload[11]!,
+      b: payload[12]!,
+    },
+  };
+}
+
+/** Builds the 64-byte set general effect command [0x51, 0x2b, ...]. */
+export function coolermasterEncodeSetGeneralEffect(config: {
+  modeId: number;
+  speedCode?: number;
+  random?: boolean;
+  brightness?: number;
+  color?: CoolerMasterRgbColor;
+}): Uint8Array {
+  const buf = new Uint8Array(COOLERMASTER_PAYLOAD_SIZE);
+  buf[0] = COOLERMASTER_CMD_WRITE;
+  buf[1] = COOLERMASTER_SUB_GENERAL_EFFECT;
+  buf[4] = config.modeId & 0xff;
+  buf[5] = (config.speedCode ?? 0) & 0xff;
+  buf[6] = config.random ? 0xa0 : config.modeId === COOLERMASTER_LIGHTING_MODE_BREATH ? 0x20 : 0x00;
+  buf[7] = 0xff;
+  buf[8] = 0xff;
+  buf[9] = (config.brightness ?? 255) & 0xff;
+  buf[10] = (config.color?.r ?? 255) & 0xff;
+  buf[11] = (config.color?.g ?? 0) & 0xff;
+  buf[12] = (config.color?.b ?? 0) & 0xff;
+  return buf;
+}
+
+/** Builds the 64-byte get custom effect request [0x52, 0xa8, ...0x00]. */
+export function coolermasterEncodeGetCustomEffect(): Uint8Array {
+  const buf = new Uint8Array(COOLERMASTER_PAYLOAD_SIZE);
+  buf[0] = COOLERMASTER_CMD_READ;
+  buf[1] = COOLERMASTER_SUB_CUSTOM_EFFECT;
+  return buf;
+}
+
+export interface CoolerMasterCustomEffect {
+  wheel: CoolerMasterRgbColor;
+  logo: CoolerMasterRgbColor;
+}
+
+/** Decodes custom per-zone RGB colors from [0x52, 0xa8, ...]. */
+export function coolermasterDecodeCustomEffect(
+  source: Uint8Array | DataView,
+): CoolerMasterCustomEffect {
+  const payload = normalizePayload(source);
+  if (
+    (payload[0] !== COOLERMASTER_CMD_READ && payload[0] !== COOLERMASTER_CMD_WRITE) ||
+    payload[1] !== COOLERMASTER_SUB_CUSTOM_EFFECT
+  ) {
+    throw new Error(
+      `Invalid Cooler Master custom effect reply: [0x${payload[0]?.toString(16)}, 0x${payload[1]?.toString(16)}]`,
+    );
+  }
+  return {
+    wheel: {
+      r: payload[4]!,
+      g: payload[5]!,
+      b: payload[6]!,
+    },
+    logo: {
+      r: payload[7]!,
+      g: payload[8]!,
+      b: payload[9]!,
+    },
+  };
+}
+
+/** Builds the 64-byte set custom effect command [0x51, 0xa8, 0x00, 0x00, R0, G0, B0, R1, G1, B1, ...]. */
+export function coolermasterEncodeSetCustomEffect(
+  wheel: CoolerMasterRgbColor,
+  logo: CoolerMasterRgbColor,
+): Uint8Array {
+  const buf = new Uint8Array(COOLERMASTER_PAYLOAD_SIZE);
+  buf[0] = COOLERMASTER_CMD_WRITE;
+  buf[1] = COOLERMASTER_SUB_CUSTOM_EFFECT;
+  buf[4] = wheel.r & 0xff;
+  buf[5] = wheel.g & 0xff;
+  buf[6] = wheel.b & 0xff;
+  buf[7] = logo.r & 0xff;
+  buf[8] = logo.g & 0xff;
+  buf[9] = logo.b & 0xff;
+  return buf;
+}
+

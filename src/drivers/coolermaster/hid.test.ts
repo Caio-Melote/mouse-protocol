@@ -47,6 +47,13 @@ class FakeCoolerMasterDevice {
   private angleTuning = 0;
   private angleSnapping = false;
   private liftOffDistance: "Low" | "High" = "Low";
+  private lightingMode = 2; // Color cycle
+  private lightingSpeed = 40;
+  private lightingBrightness = 255;
+  private lightingRandom = false;
+  private lightingColor = { r: 255, g: 0, b: 0 };
+  private customWheel = { r: 255, g: 0, b: 0 };
+  private customLogo = { r: 0, g: 255, b: 0 };
 
   private listeners = new Set<(event: HIDInputReportEvent) => void>();
   readonly sentReports: Array<{ reportId: number; data: Uint8Array }> = [];
@@ -120,6 +127,50 @@ class FakeCoolerMasterDevice {
       // Set Debounce
       this.debounceMs = frame[12]!;
       reply.set(frame);
+    } else if (frame[0] === 0x52 && frame[1] === 0x28) {
+      // Get Effect Mode
+      reply[0] = 0x52;
+      reply[1] = 0x28;
+      reply[4] = this.lightingMode;
+    } else if (frame[0] === 0x51 && frame[1] === 0x28) {
+      // Set Effect Mode
+      this.lightingMode = frame[4]!;
+      reply.set(frame);
+    } else if (frame[0] === 0x52 && frame[1] === 0xa8) {
+      // Get Custom Effect
+      reply[0] = 0x52;
+      reply[1] = 0xa8;
+      reply[4] = this.customWheel.r;
+      reply[5] = this.customWheel.g;
+      reply[6] = this.customWheel.b;
+      reply[7] = this.customLogo.r;
+      reply[8] = this.customLogo.g;
+      reply[9] = this.customLogo.b;
+    } else if (frame[0] === 0x51 && frame[1] === 0xa8) {
+      // Set Custom Effect
+      this.customWheel = { r: frame[4]!, g: frame[5]!, b: frame[6]! };
+      this.customLogo = { r: frame[7]!, g: frame[8]!, b: frame[9]! };
+      reply.set(frame);
+    } else if (frame[0] === 0x52 && frame[1] === 0x2b) {
+      // Get General Effect
+      reply[0] = 0x52;
+      reply[1] = 0x2b;
+      reply[4] = this.lightingMode;
+      reply[5] = this.lightingSpeed;
+      reply[6] = this.lightingRandom ? 0xa0 : 0x20;
+      reply[7] = 0xff;
+      reply[8] = 0xff;
+      reply[9] = this.lightingBrightness;
+      reply[10] = this.lightingColor.r;
+      reply[11] = this.lightingColor.g;
+      reply[12] = this.lightingColor.b;
+    } else if (frame[0] === 0x51 && frame[1] === 0x2b) {
+      // Set General Effect
+      this.lightingSpeed = frame[5]!;
+      this.lightingRandom = (frame[6]! & 0x80) !== 0;
+      this.lightingBrightness = frame[9]!;
+      this.lightingColor = { r: frame[10]!, g: frame[11]!, b: frame[12]! };
+      reply.set(frame);
     }
 
     queueMicrotask(() => {
@@ -188,6 +239,12 @@ test("CoolerMasterHidClient reads complete status from device", async () => {
     maxDpi: 16000,
     stepDpi: 100,
   });
+  assert.ok(status.lighting);
+  assert.equal(status.lighting.zone, "Scroll wheel");
+  assert.equal(status.lighting.mode, "Cycling");
+  assert.equal(status.lightingZones?.length, 2);
+  assert.equal(status.lightingZones[0]?.zone, "Scroll wheel");
+  assert.equal(status.lightingZones[1]?.zone, "Logo");
 });
 
 test("CoolerMasterHidClient sets active DPI stage and stage values", async () => {
@@ -288,4 +345,102 @@ test("Cooler Master device is registered and resolved in the driver registry", (
   assert.equal(deviceBrand(client), "Cooler Master");
   assert.equal(clientSupportScore(fake as unknown as HIDDevice), 7);
 });
+
+test("CoolerMasterHidClient sets static lighting per zone", async () => {
+  const fake = new FakeCoolerMasterDevice();
+  const client = new CoolerMasterHidClient(fake as unknown as HIDDevice);
+
+  const status = await client.readStatus();
+  const wheelZone = status.lightingZones![0]!;
+  const logoZone = status.lightingZones![1]!;
+
+  // Set Scroll wheel to blue
+  const updatedWheel = await client.setLighting({
+    ...wheelZone,
+    mode: "Static",
+    color: "#0000ff",
+  });
+  assert.equal(updatedWheel.zone, "Scroll wheel");
+  assert.equal(updatedWheel.mode, "Static");
+  assert.equal(updatedWheel.color, "#0000ff");
+
+  // Set Logo to magenta
+  const updatedLogo = await client.setLighting({
+    ...logoZone,
+    mode: "Static",
+    color: "#ff00ff",
+  });
+  assert.equal(updatedLogo.zone, "Logo");
+  assert.equal(updatedLogo.mode, "Static");
+  assert.equal(updatedLogo.color, "#ff00ff");
+
+  // Re-read status and verify both zones kept their colors
+  const recheck = await client.readStatus();
+  assert.equal(recheck.lightingZones![0]!.color, "#0000ff");
+  assert.equal(recheck.lightingZones![1]!.color, "#ff00ff");
+});
+
+test("CoolerMasterHidClient sets breathing and color cycle lighting", async () => {
+  const fake = new FakeCoolerMasterDevice();
+  const client = new CoolerMasterHidClient(fake as unknown as HIDDevice);
+
+  const status = await client.readStatus();
+  const zone = status.lightingZones![0]!;
+
+  // Breathing single color
+  const breath = await client.setLighting({
+    ...zone,
+    mode: "Breathing single",
+    color: "#00ff00",
+    speed: 4,
+    brightness: 80,
+  });
+  assert.equal(breath.mode, "Breathing single");
+  assert.equal(breath.color, "#00ff00");
+  assert.equal(breath.speed, 4);
+
+  // Breathing random colors
+  const breathRandom = await client.setLighting({
+    ...zone,
+    mode: "Breathing random",
+    speed: 2,
+  });
+  assert.equal(breathRandom.mode, "Breathing random");
+  assert.equal(breathRandom.color, null);
+  assert.equal(breathRandom.speed, 2);
+
+  // Color cycle (Cycling)
+  const cycle = await client.setLighting({
+    ...zone,
+    mode: "Cycling",
+    speed: 5,
+    brightness: 100,
+  });
+  assert.equal(cycle.mode, "Cycling");
+  assert.equal(cycle.speed, 5);
+  assert.equal(cycle.color, null);
+
+  // Off
+  const off = await client.setLighting({
+    ...zone,
+    mode: "Off",
+  });
+  assert.equal(off.mode, "Off");
+  assert.equal(off.brightness, 0);
+
+  // Validation
+  await assert.rejects(
+    () => client.setLighting({ ...zone, zone: "Underglow" }),
+    /Unknown Cooler Master lighting zone/,
+  );
+  await assert.rejects(
+    () => client.setLighting({ ...zone, mode: null }),
+    /Choose an RGB effect first/,
+  );
+  await assert.rejects(
+    () => client.setLighting({ ...zone, mode: "Wave" as any }),
+    /Unsupported Cooler Master lighting mode/,
+  );
+});
+
 
