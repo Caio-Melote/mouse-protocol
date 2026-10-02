@@ -199,10 +199,8 @@ export class CoolerMasterHidClient {
         },
         perf.rawPayload,
       );
-      await this.exchange(writePacket);
-      const recheck = coolermasterDecodePerformance(
-        await this.exchange(coolermasterEncodeGetPerformance()),
-      );
+      const echo = await this.exchange(writePacket);
+      const recheck = coolermasterDecodePerformance(echo);
       this.lastPerformance = recheck;
       return recheck.currentDpi;
     });
@@ -220,10 +218,8 @@ export class CoolerMasterHidClient {
         { activeDpiStage: stage },
         perf.rawPayload,
       );
-      await this.exchange(writePacket);
-      const recheck = coolermasterDecodePerformance(
-        await this.exchange(coolermasterEncodeGetPerformance()),
-      );
+      const echo = await this.exchange(writePacket);
+      const recheck = coolermasterDecodePerformance(echo);
       this.lastPerformance = recheck;
       return recheck.activeDpiStage;
     });
@@ -251,10 +247,8 @@ export class CoolerMasterHidClient {
         },
         perf.rawPayload,
       );
-      await this.exchange(writePacket);
-      const recheck = coolermasterDecodePerformance(
-        await this.exchange(coolermasterEncodeGetPerformance()),
-      );
+      const echo = await this.exchange(writePacket);
+      const recheck = coolermasterDecodePerformance(echo);
       this.lastPerformance = recheck;
       return recheck.dpiStages[stage]!;
     });
@@ -273,10 +267,8 @@ export class CoolerMasterHidClient {
         { stageCount: count, activeDpiStage: clampedActive },
         perf.rawPayload,
       );
-      await this.exchange(writePacket);
-      const recheck = coolermasterDecodePerformance(
-        await this.exchange(coolermasterEncodeGetPerformance()),
-      );
+      const echo = await this.exchange(writePacket);
+      const recheck = coolermasterDecodePerformance(echo);
       this.lastPerformance = recheck;
       return recheck.stageCount;
     });
@@ -291,9 +283,8 @@ export class CoolerMasterHidClient {
     return await this.serialized(async () => {
       await this.open();
       const writePacket = coolermasterEncodeSetPollingRate(hz);
-      await this.exchange(writePacket);
-      const readReply = await this.exchange(coolermasterEncodeGetPollingRate());
-      return coolermasterDecodePollingRate(readReply);
+      const echo = await this.exchange(writePacket);
+      return coolermasterDecodePollingRate(echo);
     });
   }
 
@@ -304,9 +295,8 @@ export class CoolerMasterHidClient {
     return await this.serialized(async () => {
       await this.open();
       const writePacket = coolermasterEncodeSetDebounce(ms);
-      await this.exchange(writePacket);
-      const readReply = await this.exchange(coolermasterEncodeGetDebounce());
-      return coolermasterDecodeDebounce(readReply);
+      const echo = await this.exchange(writePacket);
+      return coolermasterDecodeDebounce(echo);
     });
   }
 
@@ -320,10 +310,8 @@ export class CoolerMasterHidClient {
         { liftOffDistance: lod },
         perf.rawPayload,
       );
-      await this.exchange(writePacket);
-      const recheck = coolermasterDecodePerformance(
-        await this.exchange(coolermasterEncodeGetPerformance()),
-      );
+      const echo = await this.exchange(writePacket);
+      const recheck = coolermasterDecodePerformance(echo);
       this.lastPerformance = recheck;
       return recheck.liftOffDistance;
     });
@@ -336,10 +324,8 @@ export class CoolerMasterHidClient {
         { angleSnapping: enabled },
         perf.rawPayload,
       );
-      await this.exchange(writePacket);
-      const recheck = coolermasterDecodePerformance(
-        await this.exchange(coolermasterEncodeGetPerformance()),
-      );
+      const echo = await this.exchange(writePacket);
+      const recheck = coolermasterDecodePerformance(echo);
       this.lastPerformance = recheck;
       return recheck.angleSnapping;
     });
@@ -355,10 +341,8 @@ export class CoolerMasterHidClient {
         { angleTuning: degrees },
         perf.rawPayload,
       );
-      await this.exchange(writePacket);
-      const recheck = coolermasterDecodePerformance(
-        await this.exchange(coolermasterEncodeGetPerformance()),
-      );
+      const echo = await this.exchange(writePacket);
+      const recheck = coolermasterDecodePerformance(echo);
       this.lastPerformance = recheck;
       return recheck.angleTuning;
     });
