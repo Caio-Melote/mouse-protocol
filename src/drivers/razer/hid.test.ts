@@ -1021,3 +1021,112 @@ test("a brightness the mouse does not keep is reported, and the effect it did ta
   assert.equal(after?.mode, "Spectrum");
   assert.equal(after?.brightness, 100);
 });
+
+/**
+ * A Basilisk V3: firmware, DPI and legacy polling, plus the extended-matrix
+ * effect write and per-led brightness pair (`0x0f`), all of which it answers
+ * only on transaction id `0x1f`. Brightness is held per led on the 0-255
+ * scale; `ignoreWrites` acknowledges a brightness write and keeps the level.
+ */
+function fakeBasiliskV3(options: { productId?: number; ignoreWrites?: boolean } = {}) {
+  const sent: Uint8Array[] = [];
+  const levels = new Map<number, number>([[0x00, 0xff], [0x01, 0x80], [0x04, 0x40]]);
+  let pending = new Uint8Array(RAZER_PACKET_LENGTH);
+  const device = {
+    vendorId: 0x1532,
+    productId: options.productId ?? 0x0099,
+    productName: "Razer Basilisk V3",
+    opened: true,
+    collections: [{ usagePage: 0x01, usage: 0x02, children: [], featureReports: [], inputReports: [], outputReports: [] }],
+    open: async () => {},
+    close: async () => {},
+    sendFeatureReport: async (_reportId: number, data: Uint8Array) => {
+      sent.push(data);
+      const [transactionId, commandClass, commandId] = [data[1], data[6], data[7]];
+      const answer = (dataSize: number, args: number[]) =>
+        replyPacket(commandClass, commandId, dataSize, args, RAZER_STATUS.ok);
+      if (commandClass === 0x00 && commandId === 0x81) pending = answer(0x02, [1, 0]);
+      else if (commandClass === 0x04 && commandId === 0x85) pending = answer(0x07, [0x01, 0x07, 0x08, 0x07, 0x08]);
+      else if (commandClass === 0x00 && commandId === 0x85) pending = answer(0x01, [2]);
+      else if (commandClass === 0x0f && transactionId !== 0x1f) {
+        // The real mouse stays silent on a wrong id; a stale reply models that.
+        pending = replyPacket(commandClass, commandId, data[5], [], RAZER_STATUS.unsupported);
+      } else if (commandClass === 0x0f && commandId === 0x02) pending = answer(data[5], [...data.slice(8, 8 + data[5])]);
+      else if (commandClass === 0x0f && commandId === 0x04) {
+        if (!options.ignoreWrites) levels.set(data[9], data[10]);
+        pending = answer(0x03, [data[8], data[9], data[10]]);
+      } else if (commandClass === 0x0f && commandId === 0x84) pending = answer(0x03, [data[8], data[9], levels.get(data[9]) ?? 0]);
+      else pending = replyPacket(commandClass, commandId, data[5], [], RAZER_STATUS.unsupported);
+    },
+    receiveFeatureReport: async () => new DataView(pending.buffer.slice(0)),
+  } as unknown as HIDDevice;
+  return { client: new RazerHidClient(device), sent };
+}
+
+test("the Basilisk V3 offers three extended-matrix zones with each led's brightness", async () => {
+  const { client, sent } = fakeBasiliskV3();
+
+  const status = await client.readStatus();
+
+  assert.deepEqual(status.lightingZones?.map((zone) => zone.zone), ["Mouse", "Scroll wheel", "Logo"]);
+  assert.deepEqual(status.lightingZones?.map((zone) => zone.brightness), [100, 50, 25]);
+  assert.deepEqual(status.lightingZones?.[0].modes, ["Off", "Spectrum", "Wave", "Static"]);
+  assert.equal(status.lightingZones?.[0].writeOnly, true);
+  // `lighting` stays the first zone for callers that predate zones.
+  assert.equal(status.lighting?.zone, "Mouse");
+  // Every lighting read went out on 0x1f, to the all, scroll and logo leds.
+  const reads = sent.filter((packet) => packet[6] === 0x0f);
+  assert.deepEqual(reads.map((packet) => [packet[1], packet[7], packet[9]]), [[0x1f, 0x84, 0x00], [0x1f, 0x84, 0x01], [0x1f, 0x84, 0x04]]);
+});
+
+test("a Basilisk V3 zone write goes to that zone's led on 0x1f", async () => {
+  const { client, sent } = fakeBasiliskV3();
+  const zones = (await client.readStatus()).lightingZones!;
+  sent.length = 0;
+
+  await client.setLighting({ ...zones[1], mode: "Static", color: "#ff8000" });
+  await client.setLighting({ ...zones[2], mode: "Wave" });
+
+  assert.deepEqual(sent.map((packet) => [packet[1], packet[6], packet[7]]), [[0x1f, 0x0f, 0x02], [0x1f, 0x0f, 0x02]]);
+  assert.deepEqual([...sliceArgs(sent[0], 0, 9)], [0x01, 0x01, 0x01, 0x00, 0x00, 0x01, 0xff, 0x80, 0x00]);
+  assert.deepEqual([...sliceArgs(sent[1], 0, 6)], [0x01, 0x04, 0x04, 0x01, 0x28, 0x00]);
+  // Write-only: the next status read reports each zone's cached effect.
+  const after = (await client.readStatus()).lightingZones!;
+  assert.deepEqual(after.map((zone) => zone.mode), [null, "Static", "Wave"]);
+});
+
+test("a Basilisk V3 brightness change is written to that led and confirmed by reading it back", async () => {
+  const { client, sent } = fakeBasiliskV3();
+  const zones = (await client.readStatus()).lightingZones!;
+  sent.length = 0;
+
+  const result = await client.setLighting({ ...zones[0], mode: "Spectrum", brightness: 50 });
+
+  assert.deepEqual(sent.map((packet) => [packet[7], packet[9]]), [[0x02, 0x00], [0x04, 0x00], [0x84, 0x00]]);
+  assert.deepEqual([...sliceArgs(sent[1], 0, 3)], [0x01, 0x00, 0x80]);
+  assert.equal(result.brightness, 50);
+  assert.equal((await client.readStatus()).lightingZones?.[0].brightness, 50);
+});
+
+test("a Basilisk V3 brightness the mouse does not keep is reported and the effect stays cached", async () => {
+  const { client } = fakeBasiliskV3({ ignoreWrites: true });
+  const zones = (await client.readStatus()).lightingZones!;
+
+  await assert.rejects(
+    client.setLighting({ ...zones[2], mode: "Spectrum", brightness: 50 }),
+    /kept 25% brightness instead of 50%/,
+  );
+
+  const after = (await client.readStatus()).lightingZones![2];
+  assert.equal(after.mode, "Spectrum");
+  assert.equal(after.brightness, 25);
+});
+
+test("a Basilisk V3 refuses a zone it does not have", async () => {
+  const { client, sent } = fakeBasiliskV3();
+  const zones = (await client.readStatus()).lightingZones!;
+  sent.length = 0;
+
+  await assert.rejects(client.setLighting({ ...zones[0], zone: "Underglow", mode: "Static" }), /no "Underglow" lighting zone/);
+  assert.equal(sent.length, 0);
+});

@@ -272,6 +272,15 @@ test("button mapping is only offered on connections where class 0x02 answered", 
   }
 });
 
+test("extended-matrix lighting is offered on the Basilisk V3 pair OpenRazer drives that way", () => {
+  // Untested on hardware: a reporter with the mouse connected and asked for
+  // the lighting, which is the only way an effect write without a read-back
+  // ever gets checked. Each id here needs its owner to watch the LEDs.
+  const offered = RAZER_PRODUCT_IDS.filter((id) => RAZER_PRODUCTS.get(id)?.extendedMatrixLighting === true);
+  assert.deepEqual(offered, [0x0099, 0x00cb]);
+  for (const id of offered) assert.notEqual(RAZER_PRODUCTS.get(id)?.standardMatrixLighting, true);
+});
+
 test("standard-matrix lighting is only offered on a model someone is testing it on", () => {
   // Effect writes have no read-back, so a mouse that ignores them looks the
   // same as one that obeys. Every entry needs its owner to watch the LEDs.

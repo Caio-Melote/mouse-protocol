@@ -914,3 +914,43 @@ To test the lighting, with Synapse quit:
    brightness survived. Nothing reads the effect back, so this is the only way
    to learn whether it is stored.
 6. Report any effect that errors or leaves the LEDs unchanged.
+
+## Basilisk V3 (`1532:0099`) and Basilisk V3 35K (`1532:00cb`)
+
+Driven by the generic `RazerHidClient`. Not verified by this project; a user
+reported the mouse connecting with no lighting card, which is what added the
+lighting. **The lighting has not been tried on hardware yet.** It follows
+openrazer's extended-matrix family for these two ids, every command on
+transaction id `0x1f`, addressed to one led at a time:
+
+| Zone | Led | Notes |
+| --- | --- | --- |
+| Mouse | `0x00` (`ZERO_LED`) | every LED at once; the only way to reach the underglow strip |
+| Scroll wheel | `0x01` | |
+| Logo | `0x04` | |
+
+| Write | Class / ID | Notes |
+| --- | --- | --- |
+| Off / Spectrum / Wave / Static | `0x0f` / `0x02` | `[storage, led, effect, ...]`; wave direction `0x01`, speed `0x28` |
+| Brightness | `0x0f` / `0x04` | `[storage, led, level]`, level on a 0-255 scale |
+
+| Read | Class / ID | Notes |
+| --- | --- | --- |
+| Brightness | `0x0f` / `0x84` | level in the third byte, read per led on every refresh |
+
+openrazer creates wave, spectrum, static and brightness for these models and
+no "none"; Off is the same family's effect `0x00`, so it is offered and is
+the first thing to drop if it fails. Reactive and breathing exist in the family
+but openrazer does not expose them here, so they are not offered.
+
+To test, with Synapse quit:
+
+1. Open the Lighting tab. Three zones should show, each with the brightness
+   it read; note the three levels.
+2. On the Mouse zone pick Spectrum, Wave, Static (change the colour) and Off,
+   and watch the whole mouse including the underglow strip.
+3. Repeat on Scroll wheel and Logo, and confirm only that zone changes.
+4. Change one zone's brightness, reload, and confirm the new level reads back.
+5. Unplug and replug the mouse and note whether the effects and brightness
+   survived.
+6. Report any effect that errors or leaves the LEDs unchanged.
