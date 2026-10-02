@@ -204,6 +204,10 @@
     "./fater": {
       "types": "./dist/fater/index.d.ts",
       "import": "./dist/fater/index.js"
+    },
+    "./coolermaster": {
+      "types": "./dist/coolermaster/index.d.ts",
+      "import": "./dist/coolermaster/index.js"
     }
   },
   "scripts": {

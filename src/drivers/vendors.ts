@@ -117,8 +117,14 @@ import {
   FATER_VENDOR_ID,
 } from "@openmouse/protocol/fater";
 import { MOTOSPEED_PRODUCTS, MOTOSPEED_USAGE_PAGE, MOTOSPEED_VENDOR_ID } from "@openmouse/protocol/motospeed";
+import {
+  COOLERMASTER_USAGE,
+  COOLERMASTER_USAGE_PAGE,
+  COOLERMASTER_VENDOR_ID,
+} from "@openmouse/protocol/coolermaster";
 
 export const VENDOR_ID = {
+  coolermaster: COOLERMASTER_VENDOR_ID,
   vaxee: VAXEE_VENDOR_ID,
   asus: ASUS_VENDOR_ID,
   ryunix: RYUNIX_VENDOR_ID,
@@ -837,4 +843,5 @@ export const SUPPORTED_HID_FILTERS: HIDDeviceFilter[] = [
   ...HYPERX_HID_FILTERS,
   ...RYUNIX_HID_FILTERS,
   ...RAPOO_HID_FILTERS,
+  { vendorId: VENDOR_ID.coolermaster, usagePage: COOLERMASTER_USAGE_PAGE, usage: COOLERMASTER_USAGE },
 ];

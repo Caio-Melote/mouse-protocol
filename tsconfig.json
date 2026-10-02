@@ -49,7 +49,8 @@
       "@openmouse/protocol/delux": ["./src/delux/index.ts"],
       "@openmouse/protocol/bytech": ["./src/bytech/index.ts"],
       "@openmouse/protocol/rapoo": ["./src/rapoo/index.ts"],
-      "@openmouse/protocol/fater": ["./src/fater/index.ts"]
+      "@openmouse/protocol/fater": ["./src/fater/index.ts"],
+      "@openmouse/protocol/coolermaster": ["./src/coolermaster/index.ts"]
     }
   },
   "include": ["src/**/*"],
