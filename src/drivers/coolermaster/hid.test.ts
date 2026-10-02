@@ -40,6 +40,7 @@ class FakeCoolerMasterDevice {
 
   // Internal state modeled after captured MM711 hardware responses
   private activeStage = 1;
+  private stageCount = 7;
   private dpiStages = [400, 800, 1600, 1200, 3200, 6400, 16000];
   private pollingCode = 1; // 1000 Hz
   private debounceMs = 5;
@@ -81,7 +82,7 @@ class FakeCoolerMasterDevice {
       reply[0] = 0x52;
       reply[1] = 0x40;
       reply[4] = this.activeStage;
-      reply[5] = this.dpiStages.length;
+      reply[5] = this.stageCount;
       for (let i = 0; i < 7; i++) {
         reply[6 + i] = coolermasterEncodeDpi(this.dpiStages[i]!);
         reply[13 + i] = coolermasterEncodeDpi(this.dpiStages[i]!);
@@ -94,6 +95,7 @@ class FakeCoolerMasterDevice {
       // Set Performance
       reply.set(frame);
       this.activeStage = frame[4]!;
+      if (frame[5]! > 0) this.stageCount = frame[5]!;
       for (let i = 0; i < 7; i++) {
         this.dpiStages[i] = coolermasterDecodeDpi(frame[6 + i]!);
       }
@@ -179,6 +181,13 @@ test("CoolerMasterHidClient reads complete status from device", async () => {
   assert.equal(status.batteryPercent, null);
   assert.equal(status.ui?.valuesVerified, true);
   assert.equal(status.ui?.settingsReady, true);
+  assert.deepEqual(status.ui?.dpiStageEditor, {
+    maxStages: 7,
+    countEditable: true,
+    minDpi: 100,
+    maxDpi: 16000,
+    stepDpi: 100,
+  });
 });
 
 test("CoolerMasterHidClient sets active DPI stage and stage values", async () => {
@@ -201,6 +210,21 @@ test("CoolerMasterHidClient sets active DPI stage and stage values", async () =>
   assert.equal(status.activeDpiStage, 0);
   assert.equal(status.dpi, 1200);
   assert.equal(status.dpiStages?.[3], 2000);
+});
+
+test("CoolerMasterHidClient sets DPI stage count", async () => {
+  const fake = new FakeCoolerMasterDevice();
+  const client = new CoolerMasterHidClient(fake as unknown as HIDDevice);
+
+  const count3 = await client.setDpiStageCount(3);
+  assert.equal(count3, 3);
+
+  const status = await client.readStatus();
+  assert.equal(status.dpiStages?.length, 3);
+  assert.deepEqual(status.dpiStages, [400, 800, 1600]);
+
+  await assert.rejects(() => client.setDpiStageCount(0), RangeError);
+  await assert.rejects(() => client.setDpiStageCount(8), RangeError);
 });
 
 test("CoolerMasterHidClient sets polling rate", async () => {

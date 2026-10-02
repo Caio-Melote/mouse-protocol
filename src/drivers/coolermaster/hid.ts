@@ -6,6 +6,7 @@ import {
   COOLERMASTER_DPI_MIN,
   COOLERMASTER_DPI_OPTIONS,
   COOLERMASTER_DPI_STAGE_COUNT,
+  COOLERMASTER_DPI_STEP,
   COOLERMASTER_POLLING_RATES,
   COOLERMASTER_PRODUCT_IDS,
   COOLERMASTER_PRODUCT_NAMES,
@@ -151,13 +152,20 @@ export class CoolerMasterHidClient {
           hideProcessingCard: false,
           hideRippleControl: true,
           hideMotionSync: true,
+          dpiStageEditor: {
+            maxStages: COOLERMASTER_DPI_STAGE_COUNT,
+            countEditable: true,
+            minDpi: COOLERMASTER_DPI_MIN,
+            maxDpi: COOLERMASTER_DPI_MAX,
+            stepDpi: COOLERMASTER_DPI_STEP,
+          },
         },
         batteryPercent: null,
         batteryState: "Unknown",
         dpi: perf.currentDpi,
         dpiY: perf.currentDpiY,
         supportsSeparateDpiAxes: true,
-        dpiStages: perf.dpiStages,
+        dpiStages: perf.dpiStages.slice(0, perf.stageCount),
         activeDpiStage: perf.activeDpiStage,
         pollingRateHz: pollingRate,
         supportedPollingRates: [...COOLERMASTER_POLLING_RATES],
@@ -249,6 +257,28 @@ export class CoolerMasterHidClient {
       );
       this.lastPerformance = recheck;
       return recheck.dpiStages[stage]!;
+    });
+  }
+
+  async setDpiStageCount(count: number): Promise<number> {
+    if (!Number.isInteger(count) || count < 1 || count > COOLERMASTER_DPI_STAGE_COUNT) {
+      throw new RangeError(
+        `Cooler Master DPI stage count must be between 1 and ${COOLERMASTER_DPI_STAGE_COUNT}.`,
+      );
+    }
+    return await this.serialized(async () => {
+      const perf = await this.ensurePerformance();
+      const clampedActive = Math.min(perf.activeDpiStage, count - 1);
+      const writePacket = coolermasterEncodeSetPerformance(
+        { stageCount: count, activeDpiStage: clampedActive },
+        perf.rawPayload,
+      );
+      await this.exchange(writePacket);
+      const recheck = coolermasterDecodePerformance(
+        await this.exchange(coolermasterEncodeGetPerformance()),
+      );
+      this.lastPerformance = recheck;
+      return recheck.stageCount;
     });
   }
 
