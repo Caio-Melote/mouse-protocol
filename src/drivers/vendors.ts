@@ -110,6 +110,12 @@ import {
   REDRAGON_PRODUCT_IDS,
   REDRAGON_VENDOR_ID,
 } from "@openmouse/protocol/redragon";
+import {
+  FATER_CONFIG_USAGE,
+  FATER_CONFIG_USAGE_PAGE,
+  FATER_PRODUCT_IDS,
+  FATER_VENDOR_ID,
+} from "@openmouse/protocol/fater";
 import { MOTOSPEED_PRODUCTS, MOTOSPEED_USAGE_PAGE, MOTOSPEED_VENDOR_ID } from "@openmouse/protocol/motospeed";
 
 export const VENDOR_ID = {
@@ -161,6 +167,7 @@ export const VENDOR_ID = {
   microsoft: MICROSOFT_VENDOR_ID,
   dareu: DAREU_VENDOR_ID,
   redragon: REDRAGON_VENDOR_ID,
+  fater: FATER_VENDOR_ID,
   // Shares 0x093a with Glorious's Pixart-based Model O 2 / I 2 family (see
   // `glorious` above); GloriousHidClient.isSupported() only claims its own
   // catalogue product ids, so the two never overlap.
@@ -194,6 +201,14 @@ export const DAREU_HID_FILTERS: HIDDeviceFilter[] = [...DAREU_PRODUCT_IDS].map((
   productId,
   usagePage: DAREU_COMMAND_USAGE_PAGE,
   usage: DAREU_COMMAND_USAGE,
+}));
+
+/** Holtek vendor collection on the MCR-9000B's interface 2, as reported by its owner. */
+export const FATER_HID_FILTERS: HIDDeviceFilter[] = [...FATER_PRODUCT_IDS].map((productId) => ({
+  vendorId: FATER_VENDOR_ID,
+  productId,
+  usagePage: FATER_CONFIG_USAGE_PAGE,
+  usage: FATER_CONFIG_USAGE,
 }));
 
 /** Holtek config collection measured on the M724 K1NG 1K (usbmon + usbhid-dump). */
@@ -721,6 +736,7 @@ export const SUPPORTED_HID_FILTERS: HIDDeviceFilter[] = [
   ...ASUS_HID_FILTERS,
   ...DAREU_HID_FILTERS,
   ...REDRAGON_HID_FILTERS,
+  ...FATER_HID_FILTERS,
   ...MOTOSPEED_HID_FILTERS,
   ...ZAUNKOENIG_PRODUCT_IDS.map((productId) => ({
     vendorId: ZAUNKOENIG_VENDOR_ID,

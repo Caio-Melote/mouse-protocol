@@ -48,7 +48,8 @@
       "@openmouse/protocol/corsair": ["./src/corsair/index.ts"],
       "@openmouse/protocol/delux": ["./src/delux/index.ts"],
       "@openmouse/protocol/bytech": ["./src/bytech/index.ts"],
-      "@openmouse/protocol/rapoo": ["./src/rapoo/index.ts"]
+      "@openmouse/protocol/rapoo": ["./src/rapoo/index.ts"],
+      "@openmouse/protocol/fater": ["./src/fater/index.ts"]
     }
   },
   "include": ["src/**/*"],

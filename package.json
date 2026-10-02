@@ -200,6 +200,10 @@
     "./delux": {
       "types": "./dist/delux/index.d.ts",
       "import": "./dist/delux/index.js"
+    },
+    "./fater": {
+      "types": "./dist/fater/index.d.ts",
+      "import": "./dist/fater/index.js"
     }
   },
   "scripts": {
