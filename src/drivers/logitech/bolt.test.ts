@@ -114,6 +114,8 @@ test("HID++ 1.0 probe errors are treated as absent indices", () => {
     classifyHidpp20Probe(new Error("The mouse rejected that setting (unsupported)."), false),
     "hidpp20",
   );
+  // sendReport itself failing is not a reply from any device index.
+  assert.equal(classifyHidpp20Probe(new Error("Failed to write the report."), false), "unreachable");
 });
 
 /**
