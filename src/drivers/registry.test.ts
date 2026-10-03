@@ -15,6 +15,7 @@ import {
   DELUX_M800_MINI_WIRELESS_PID,
   DELUX_OEM_VENDOR_ID,
 } from "@openmouse/protocol/delux";
+import { COOLERMASTER_PRODUCT_IDS } from "@openmouse/protocol/coolermaster";
 
 const DEVICES_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -91,6 +92,10 @@ function candidateProductIds(): number[] {
     // The Keychron 8K Nordic driver claims its ids out of the 4K family's
     // shared collection, so the probe needs them to reach it.
     ...KEYCHRON_8K_NORDIC_PRODUCT_IDS,
+    // The Cooler Master driver matches on an id allowlist, but its only
+    // product id (0x0101) is defined in src/coolermaster/ and appears as no
+    // literal under src/drivers/, so the source scan below would not find it.
+    ...COOLERMASTER_PRODUCT_IDS,
     // Claimed by id alone and defined outside src/drivers, so the source
     // scan below would not find it.
     DELUX_M600_PRO_WIRED_PID,
