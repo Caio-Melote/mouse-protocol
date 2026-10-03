@@ -101,6 +101,14 @@ export interface RazerProduct {
    * hardware run can tell.
    */
   standardMatrixLighting?: boolean;
+  /**
+   * The extended-matrix lighting commands (class `0x0f`: effect `0x02` and
+   * the brightness pair `0x04`/`0x84`) on transaction id `0x1f`, addressed per
+   * led: all, scroll wheel and logo. OpenRazer drives the Basilisk V3 family
+   * this way. Same caveat as `standardMatrixLighting`: the effect write has no
+   * read-back, so only a hardware run proves the mouse obeys it.
+   */
+  extendedMatrixLighting?: boolean;
   /** Also accept a vendor-defined collection as the control interface. */
   vendorControlInterface?: boolean;
   /** DPI storage selector; some generations use the no-store command form. */
@@ -510,8 +518,11 @@ const PRODUCT_DEFINITIONS: ReadonlyArray<[number, Omit<RazerProduct, "transactio
   }],
   // ---- index3: wired, control channel on USB interface 3 --------------------
   [0x0096, { model: "Naga X", ...INDEX3, maxDpi: 18_000 }],
-  [0x0099, { model: "Basilisk V3", ...INDEX3, maxDpi: 26_000 }],
-  [0x00cb, { model: "Basilisk V3 35K", ...INDEX3, maxDpi: DPI_FOCUS_PRO_35K }],
+  // Lighting follows OpenRazer's extended-matrix commands for these two ids
+  // (wave, spectrum, static and brightness on the all/scroll/logo leds, all on
+  // 0x1f) and has not been tried on hardware yet.
+  [0x0099, { model: "Basilisk V3", ...INDEX3, maxDpi: 26_000, extendedMatrixLighting: true }],
+  [0x00cb, { model: "Basilisk V3 35K", ...INDEX3, maxDpi: DPI_FOCUS_PRO_35K, extendedMatrixLighting: true }],
 
   // ---- atheris-receiver: longer receiver wait -------------------------------
   [0x0062, { model: "Atheris", ...ATHERIS_RECEIVER, maxDpi: 7200 }],

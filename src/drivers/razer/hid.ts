@@ -5,6 +5,7 @@ import { openRazerDevice } from "./hid-open.ts";
 import {
   RAZER_BACKLIGHT_BRIGHTNESS_READ,
   RAZER_BUTTON_CONTROLS,
+  RAZER_LED,
   RAZER_BUTTON_CONTROL_LABEL,
   RAZER_LANDING_MAX,
   RAZER_LANDING_MIN,
@@ -18,6 +19,7 @@ import {
   RAZER_STATUS,
   RAZER_TRACKING_DISTANCES,
   RAZER_TRANSACTION_ID,
+  RAZER_TRANSACTION_ID_1F,
   RazerProtocolError,
   decodeBacklightBrightness,
   decodeBatteryPercent,
@@ -56,10 +58,14 @@ import {
   razerSetSleepTimeoutCommand,
   razerSetBacklightBrightnessCommand,
   razerSetStandardEffectCommand,
+  razerReadExtendedBrightnessCommand,
+  razerSetExtendedBrightnessCommand,
+  razerSetExtendedEffectCommand,
   type RazerButtonControl,
   type RazerButtonMapping,
   type RazerCommand,
   type RazerDpi,
+  type RazerExtendedEffect,
   type RazerLiftOff,
   type RazerReactiveSpeed,
   type RazerStandardEffect,
@@ -128,6 +134,27 @@ const STANDARD_REACTIVE_MODES: readonly MouseLightingMode[] = ["Reactive"];
 const STANDARD_REACTIVE_SPEEDS: readonly RazerReactiveSpeed[] = [1, 2, 3, 4];
 const STANDARD_BRIGHTNESS_LEVELS: readonly number[] = [25, 50, 75, 100];
 
+// The extended-matrix family addresses leds, so the panel gets one zone per
+// led OpenRazer exposes on the Basilisk V3: the whole mouse (ZERO_LED, which
+// is also the only way to reach the underglow strip), the scroll wheel and
+// the logo. Effects are the ones OpenRazer creates for these models; the
+// "none" effect is the same command family, so Off is offered too.
+const EXTENDED_LIGHTING_ZONES: readonly { zone: string; led: number }[] = [
+  { zone: "Mouse", led: RAZER_LED.all },
+  { zone: "Scroll wheel", led: RAZER_LED.scrollWheel },
+  { zone: "Logo", led: RAZER_LED.logo },
+];
+const EXTENDED_LIGHTING_EFFECTS = {
+  Off: "off",
+  Spectrum: "spectrum",
+  Wave: "wave",
+  Static: "static",
+} as const satisfies Partial<Record<MouseLightingMode, RazerExtendedEffect>>;
+const EXTENDED_LIGHTING_MODES = Object.keys(EXTENDED_LIGHTING_EFFECTS) as (keyof typeof EXTENDED_LIGHTING_EFFECTS)[];
+const EXTENDED_COLOR_MODES: readonly MouseLightingMode[] = ["Static"];
+/** OpenRazer sends every extended-matrix command for these models on `0x1f`. */
+const EXTENDED_LIGHTING_TRANSACTION_ID = RAZER_TRANSACTION_ID_1F;
+
 /**
  * Razer exposes its control channel on the interface that declares a Generic
  * Desktop Mouse collection. WebHID groups each top-level collection into its
@@ -181,6 +208,8 @@ export class RazerHidClient {
    * read, and every status read refreshes it.
    */
   private lighting: MouseLighting | null = null;
+  /** Same cache, one entry per led, for the extended-matrix family. */
+  private lightingZones: MouseLighting[] | null = null;
 
   readonly device: HIDDevice;
 
@@ -345,6 +374,7 @@ export class RazerHidClient {
     // background refresh for every model that does not have it.
     const liftOff = this.profile()?.liftOff === true ? await this.readLiftOff() : null;
     const lighting = this.profile()?.standardMatrixLighting === true ? await this.readLighting() : null;
+    const lightingZones = this.profile()?.extendedMatrixLighting === true ? await this.readExtendedLighting() : null;
     return {
       brand: "Razer",
       name: this.displayName(),
@@ -411,7 +441,8 @@ export class RazerHidClient {
         }
         : null,
       razerButtonMappings: buttonMappings ?? undefined,
-      lighting: lighting ?? undefined,
+      lighting: lighting ?? lightingZones?.[0],
+      lightingZones: lightingZones ?? undefined,
       // Writable through `setDpiStageValue`/`setActiveDpiStage`, which rewrite
       // the whole table and confirm by reading it back.
       ...(stages ? { dpiStages: stages.stages, activeDpiStage: stages.active } : {}),
@@ -513,6 +544,7 @@ export class RazerHidClient {
    * breathing alone fails on hardware, that is the assumption to revisit.
    */
   async setLighting(lighting: MouseLighting): Promise<MouseLighting> {
+    if (this.profile()?.extendedMatrixLighting === true) return this.setExtendedLighting(lighting);
     if (this.profile()?.standardMatrixLighting !== true) {
       throw new Error("This mouse does not support changing the lighting yet.");
     }
@@ -558,6 +590,71 @@ export class RazerHidClient {
       brightnessLevels: brightness === null ? [] : STANDARD_BRIGHTNESS_LEVELS,
     };
     return this.lighting;
+  }
+
+  /**
+   * Extended-matrix counterpart of `setLighting`: the effect goes to the zone's
+   * led on `0x1f`, then the brightness when it changed, confirmed by reading
+   * it back. Effects have no read, so the zone's cache is what gets reported.
+   */
+  private async setExtendedLighting(lighting: MouseLighting): Promise<MouseLighting> {
+    const index = EXTENDED_LIGHTING_ZONES.findIndex(({ zone }) => zone === lighting.zone);
+    if (index < 0) throw new Error(`This mouse has no "${lighting.zone}" lighting zone.`);
+    const { led } = EXTENDED_LIGHTING_ZONES[index];
+    const effect = lighting.mode ? EXTENDED_LIGHTING_EFFECTS[lighting.mode as keyof typeof EXTENDED_LIGHTING_EFFECTS] : undefined;
+    if (!effect) throw new Error("Pick an effect first.");
+    const zones = this.extendedLightingFromCache();
+    const previous = zones[index];
+    await this.request(
+      razerSetExtendedEffectCommand(effect, { color: lighting.color ?? undefined, led }),
+      EXTENDED_LIGHTING_TRANSACTION_ID,
+    );
+    // Cached before the brightness step, as in the standard family.
+    zones[index] = { ...lighting, brightness: previous.brightness };
+    if (lighting.brightness != null && lighting.brightness !== previous.brightness) {
+      await this.request(razerSetExtendedBrightnessCommand(led, lighting.brightness), EXTENDED_LIGHTING_TRANSACTION_ID);
+      const confirmed = decodeBacklightBrightness(
+        await this.request(razerReadExtendedBrightnessCommand(led), EXTENDED_LIGHTING_TRANSACTION_ID),
+      );
+      if (confirmed !== lighting.brightness) {
+        throw new Error(`The mouse kept ${confirmed}% brightness instead of ${lighting.brightness}%.`);
+      }
+      zones[index] = { ...zones[index], brightness: confirmed };
+    }
+    return zones[index];
+  }
+
+  /** Every zone's cached effect plus the brightness its led reports. */
+  private async readExtendedLighting(): Promise<MouseLighting[]> {
+    const zones = this.extendedLightingFromCache();
+    for (const [index, { led }] of EXTENDED_LIGHTING_ZONES.entries()) {
+      const reply = await this.request(razerReadExtendedBrightnessCommand(led), EXTENDED_LIGHTING_TRANSACTION_ID).catch(() => null);
+      const brightness = reply ? decodeBacklightBrightness(reply) : null;
+      zones[index] = {
+        ...zones[index],
+        brightness,
+        brightnessLevels: brightness === null ? [] : STANDARD_BRIGHTNESS_LEVELS,
+      };
+    }
+    return zones;
+  }
+
+  private extendedLightingFromCache(): MouseLighting[] {
+    this.lightingZones ??= EXTENDED_LIGHTING_ZONES.map(({ zone }) => ({
+      zone,
+      modes: EXTENDED_LIGHTING_MODES,
+      mode: null,
+      color: "#00ff00",
+      color2: null,
+      colorModes: EXTENDED_COLOR_MODES,
+      dualColorModes: [],
+      reactiveModes: [],
+      speeds: [],
+      speed: null,
+      brightness: null,
+      writeOnly: true,
+    }));
+    return this.lightingZones;
   }
 
   private lightingFromCache(): MouseLighting {

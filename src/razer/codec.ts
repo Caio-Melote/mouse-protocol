@@ -80,8 +80,18 @@ export interface RazerCommand {
  */
 export const RAZER_STORAGE = 0x01;
 
-/** The underglow's led id in openrazer's extended-matrix family. */
-const RAZER_LED_LOGO = 0x04;
+/**
+ * Led ids in openrazer's extended-matrix family (`razercommon.h`). `all` is
+ * `ZERO_LED`: one write drives every zone the mouse has.
+ */
+export const RAZER_LED = {
+  all: 0x00,
+  scrollWheel: 0x01,
+  logo: 0x04,
+} as const;
+
+/** The underglow's led id on the single-zone Cobra and Viper Mini. */
+const RAZER_LED_LOGO = RAZER_LED.logo;
 
 /** Read-only commands confirmed against Viper V3 Pro firmware 1.12. */
 export const RAZER_READ = {
@@ -254,6 +264,7 @@ export type RazerExtendedEffect =
   | "off"
   | "static"
   | "spectrum"
+  | "wave"
   | "reactive"
   | "breathing-random"
   | "breathing-single"
@@ -264,6 +275,7 @@ export const RAZER_EFFECT = {
   off: 0x00,
   static: 0x01,
   spectrum: 0x03,
+  wave: 0x04,
   reactive: 0x05,
   "breathing-random": 0x02,
   "breathing-single": 0x02,
@@ -283,14 +295,16 @@ export function parseRazerColor(hex: string): [number, number, number] {
 }
 
 /**
- * Extended effect command for the Viper Mini's extended-matrix family (`0x0f` /
- * `0x02`), matching openrazer's `razer_chroma_extended_matrix_effect_*`
- * functions, which this mouse dispatches through with `VARSTORE` and the logo
- * led. The mouse's one 1x1 matrix means a single underglow zone.
+ * Extended effect command for the extended-matrix family (`0x0f` / `0x02`),
+ * matching openrazer's `razer_chroma_extended_matrix_effect_*` functions,
+ * which it dispatches through with `VARSTORE` and a led id. Single-zone mice
+ * (Viper Mini, Cobra) take the default logo led; multi-zone ones (Basilisk V3)
+ * name the zone through `options.led`.
  *
- * All effects share the `[VARSTORE, logo, effect]` header. Breathing variants
- * differ only in the colour count byte and payload length, and reactive adds a
- * speed level between the header and its single colour.
+ * All effects share the `[VARSTORE, led, effect]` header. Breathing variants
+ * differ only in the colour count byte and payload length, reactive adds a
+ * speed level between the header and its single colour, and wave carries a
+ * direction and openrazer's fixed speed byte.
  */
 export function razerSetExtendedEffectCommand(
   effect: RazerExtendedEffect,
@@ -298,14 +312,20 @@ export function razerSetExtendedEffectCommand(
     color?: string;
     color2?: string;
     speed?: RazerReactiveSpeed;
+    led?: number;
   } = {},
 ): RazerCommand {
-  const args: number[] = [RAZER_STORAGE, RAZER_LED_LOGO, RAZER_EFFECT[effect]];
+  const args: number[] = [RAZER_STORAGE, options.led ?? RAZER_LED_LOGO, RAZER_EFFECT[effect]];
   switch (effect) {
     case "off":
     case "spectrum":
     case "breathing-random":
       args.push(0x00, 0x00, 0x00);
+      break;
+    case "wave":
+      // openrazer: arguments[3] = direction, [4] = 0x28 "speed, lower is
+      // faster", declared size 6.
+      args.push(WAVE_DIRECTION, WAVE_SPEED, 0x00);
       break;
     case "static":
       if (!options.color) throw new RazerProtocolError(`${effect} needs a colour.`);
@@ -363,6 +383,8 @@ const BREATHING_RANDOM = 0x03;
 // ponytail: one fixed wave direction (openrazer takes 1 or 2); add a direction
 // option when the lighting card grows a control for it.
 const WAVE_DIRECTION = 0x01;
+/** The extended wave's speed byte; openrazer always sends this value. */
+const WAVE_SPEED = 0x28;
 
 /** The backlight's led id in openrazer's standard family (`BACKLIGHT_LED`). */
 const RAZER_LED_BACKLIGHT = 0x05;
@@ -450,9 +472,34 @@ export function razerSetBacklightBrightnessCommand(percent: number): RazerComman
   };
 }
 
-/** Whole percent; every whole percent survives the 0-255 round trip unchanged. */
+/**
+ * Whole percent; every whole percent survives the 0-255 round trip unchanged.
+ * Both brightness families answer the level in the third byte.
+ */
 export function decodeBacklightBrightness(args: Uint8Array): number {
   return Math.round((args[2] * 100) / BRIGHTNESS_SCALE);
+}
+
+/**
+ * Extended-matrix brightness read (`0x0f`/`0x84`) for one led, from openrazer's
+ * `razer_chroma_extended_matrix_get_brightness`; the level answers in the
+ * third byte like the backlight pair above.
+ */
+export function razerReadExtendedBrightnessCommand(led: number): RazerCommand {
+  return { commandClass: 0x0f, commandId: 0x84, dataSize: 0x03, args: [RAZER_STORAGE, led] };
+}
+
+/** Extended-matrix brightness write (`0x0f`/`0x04`), same layout as the read. */
+export function razerSetExtendedBrightnessCommand(led: number, percent: number): RazerCommand {
+  if (!Number.isInteger(percent) || percent < 0 || percent > 100) {
+    throw new RazerProtocolError("Brightness must be a whole percentage from 0 to 100.");
+  }
+  return {
+    commandClass: 0x0f,
+    commandId: 0x04,
+    dataSize: 0x03,
+    args: [RAZER_STORAGE, led, Math.round((percent * BRIGHTNESS_SCALE) / 100)],
+  };
 }
 
 export class RazerProtocolError extends Error {

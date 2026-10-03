@@ -55,7 +55,11 @@ import {
   razerSetButtonMappingCommand,
   razerSetToggleControlCommand,
   RAZER_BACKLIGHT_BRIGHTNESS_READ,
+  RAZER_LED,
   decodeBacklightBrightness,
+  razerReadExtendedBrightnessCommand,
+  razerSetExtendedBrightnessCommand,
+  razerSetExtendedEffectCommand,
   razerSetBacklightBrightnessCommand,
   razerSetStandardEffectCommand,
   type RazerStandardEffect,
@@ -884,6 +888,31 @@ test("standard-matrix effects match openrazer's razer_chroma_standard_matrix_eff
     assert.deepEqual([command.commandClass, command.commandId, command.dataSize], [0x03, 0x0a, dataSize], effect);
     assert.deepEqual(command.args, args, effect);
   }
+});
+
+test("extended-matrix effects address the led they are given, defaulting to the logo", () => {
+  // No capture of the Basilisk V3 exists yet, so these pin openrazer's
+  // razer_chroma_extended_matrix_effect_* payloads on the leds its driver
+  // uses for that model: ZERO_LED, SCROLL_WHEEL_LED and LOGO_LED.
+  const logo = razerSetExtendedEffectCommand("static", { color: "#ff8000" });
+  assert.deepEqual(logo.args, [0x01, 0x04, 0x01, 0x00, 0x00, 0x01, 0xff, 0x80, 0x00]);
+  const all = razerSetExtendedEffectCommand("spectrum", { led: RAZER_LED.all });
+  assert.deepEqual([all.commandClass, all.commandId, all.dataSize], [0x0f, 0x02, 0x06]);
+  assert.deepEqual(all.args, [0x01, 0x00, 0x03, 0x00, 0x00, 0x00]);
+  // Wave: effect 0x04, direction, openrazer's fixed 0x28 speed, declared size 6.
+  const wave = razerSetExtendedEffectCommand("wave", { led: RAZER_LED.scrollWheel });
+  assert.equal(wave.dataSize, 0x06);
+  assert.deepEqual(wave.args, [0x01, 0x01, 0x04, 0x01, 0x28, 0x00]);
+  assert.deepEqual(razerSetExtendedEffectCommand("off", { led: RAZER_LED.logo }).args, [0x01, 0x04, 0x00, 0x00, 0x00, 0x00]);
+});
+
+test("extended-matrix brightness addresses one led through the storage byte", () => {
+  const read = razerReadExtendedBrightnessCommand(RAZER_LED.scrollWheel);
+  assert.deepEqual([read.commandClass, read.commandId, read.dataSize, read.args], [0x0f, 0x84, 0x03, [0x01, 0x01]]);
+  const write = razerSetExtendedBrightnessCommand(RAZER_LED.all, 50);
+  assert.deepEqual([write.commandClass, write.commandId, write.dataSize, write.args], [0x0f, 0x04, 0x03, [0x01, 0x00, 0x80]]);
+  assert.equal(decodeBacklightBrightness(Uint8Array.of(0x01, 0x00, 0x80)), 50);
+  assert.throws(() => razerSetExtendedBrightnessCommand(RAZER_LED.all, 101), RazerProtocolError);
 });
 
 test("a standard-matrix effect refuses to guess a missing colour or speed", () => {
