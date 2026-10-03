@@ -1,8 +1,9 @@
-import type { MouseStatus } from "../mouse-types.ts";
+import type { MouseLighting, MouseLightingMode, MouseStatus } from "../mouse-types.ts";
 import { VENDOR_ID } from "../vendors.ts";
 import { RATES_1K, RATES_8K, RAZER_PRODUCTS, type RazerProduct } from "@openmouse/protocol/razer-devices";
 import { openRazerDevice } from "./hid-open.ts";
 import {
+  RAZER_BACKLIGHT_BRIGHTNESS_READ,
   RAZER_BUTTON_CONTROLS,
   RAZER_BUTTON_CONTROL_LABEL,
   RAZER_LANDING_MAX,
@@ -18,6 +19,7 @@ import {
   RAZER_TRACKING_DISTANCES,
   RAZER_TRANSACTION_ID,
   RazerProtocolError,
+  decodeBacklightBrightness,
   decodeBatteryPercent,
   decodeCharging,
   decodeDpi,
@@ -52,11 +54,15 @@ import {
   razerEnableSensorCalibrationCommand,
   razerSetLowPowerThresholdCommand,
   razerSetSleepTimeoutCommand,
+  razerSetBacklightBrightnessCommand,
+  razerSetStandardEffectCommand,
   type RazerButtonControl,
   type RazerButtonMapping,
   type RazerCommand,
   type RazerDpi,
   type RazerLiftOff,
+  type RazerReactiveSpeed,
+  type RazerStandardEffect,
   type RazerToggleControl,
   type RazerTrackingDistance,
 } from "@openmouse/protocol/razer";
@@ -101,6 +107,26 @@ const LOW_POWER_OPTIONS: readonly number[] = Array.from(
 // the slider out there. The setting still reads, so this bounds the control
 // rather than the command.
 const LOW_POWER_MAX_POLLING_HZ = 1000;
+
+// The standard-matrix effect drives every LED on the mouse at once, so the
+// panel gets one zone, named the way the other whole-mouse drivers name it.
+const STANDARD_LIGHTING_ZONE = "Mouse";
+const STANDARD_LIGHTING_EFFECTS = {
+  Off: "off",
+  Spectrum: "spectrum",
+  Wave: "wave",
+  Static: "static",
+  Reactive: "reactive",
+  "Breathing random": "breathing-random",
+  "Breathing single": "breathing-single",
+  "Breathing dual": "breathing-dual",
+} as const satisfies Partial<Record<MouseLightingMode, RazerStandardEffect>>;
+const STANDARD_LIGHTING_MODES = Object.keys(STANDARD_LIGHTING_EFFECTS) as (keyof typeof STANDARD_LIGHTING_EFFECTS)[];
+const STANDARD_COLOR_MODES: readonly MouseLightingMode[] = ["Static", "Reactive", "Breathing single", "Breathing dual"];
+const STANDARD_DUAL_COLOR_MODES: readonly MouseLightingMode[] = ["Breathing dual"];
+const STANDARD_REACTIVE_MODES: readonly MouseLightingMode[] = ["Reactive"];
+const STANDARD_REACTIVE_SPEEDS: readonly RazerReactiveSpeed[] = [1, 2, 3, 4];
+const STANDARD_BRIGHTNESS_LEVELS: readonly number[] = [25, 50, 75, 100];
 
 /**
  * Razer exposes its control channel on the interface that declares a Generic
@@ -149,6 +175,12 @@ export class RazerHidClient {
   private discoveredPollingRates: readonly number[] | null = null;
   /** Which polling command the paired mouse answers; null until probed. */
   private discoveredHighRatePolling: boolean | null = null;
+  /**
+   * The standard-matrix effect has no read, so this holds the last one
+   * written, the way the Cobra and Viper Mini drivers do. Brightness does
+   * read, and every status read refreshes it.
+   */
+  private lighting: MouseLighting | null = null;
 
   readonly device: HIDDevice;
 
@@ -312,6 +344,7 @@ export class RazerHidClient {
     // the strength of one. Skipping it also spares 0x0b a round trip on every
     // background refresh for every model that does not have it.
     const liftOff = this.profile()?.liftOff === true ? await this.readLiftOff() : null;
+    const lighting = this.profile()?.standardMatrixLighting === true ? await this.readLighting() : null;
     return {
       brand: "Razer",
       name: this.displayName(),
@@ -378,6 +411,7 @@ export class RazerHidClient {
         }
         : null,
       razerButtonMappings: buttonMappings ?? undefined,
+      lighting: lighting ?? undefined,
       // Writable through `setDpiStageValue`/`setActiveDpiStage`, which rewrite
       // the whole table and confirm by reading it back.
       ...(stages ? { dpiStages: stages.stages, activeDpiStage: stages.active } : {}),
@@ -465,6 +499,86 @@ export class RazerHidClient {
     this.buttonMappings = { ...this.buttonMappings, [control]: confirmed };
     this.buttonMappingsKnown = true;
     return confirmed;
+  }
+
+  /**
+   * Writes the standard-matrix effect, then the backlight brightness when it
+   * changed. The effect cannot be read back, so what was written is cached and
+   * returned; brightness can, and is confirmed like every other setter.
+   *
+   * Every command goes out on the product's own transaction id (`0xff` on the
+   * Diamondback Chroma), breathing included. OpenRazer sends this model's
+   * breathing on `0x3f`, but from a block that also lists the Cobra, whose
+   * breathing turned out to answer on the same id as its other effects. If
+   * breathing alone fails on hardware, that is the assumption to revisit.
+   */
+  async setLighting(lighting: MouseLighting): Promise<MouseLighting> {
+    if (this.profile()?.standardMatrixLighting !== true) {
+      throw new Error("This mouse does not support changing the lighting yet.");
+    }
+    if (lighting.zone !== STANDARD_LIGHTING_ZONE) {
+      throw new Error(`This mouse has no "${lighting.zone}" lighting zone.`);
+    }
+    const effect = lighting.mode ? STANDARD_LIGHTING_EFFECTS[lighting.mode as keyof typeof STANDARD_LIGHTING_EFFECTS] : undefined;
+    if (!effect) throw new Error("Pick an effect first.");
+    const speed = STANDARD_REACTIVE_SPEEDS.find((candidate) => candidate === lighting.speed);
+    if (lighting.speed !== null && speed === undefined) {
+      throw new Error(`Unknown reactive speed ${lighting.speed}.`);
+    }
+    const previous = this.lightingFromCache();
+    await this.request(razerSetStandardEffectCommand(effect, {
+      color: lighting.color ?? undefined,
+      color2: lighting.color2 ?? undefined,
+      speed,
+    }));
+    // Cached before the brightness step so a refused brightness cannot leave
+    // the panel showing an effect the mouse is no longer running.
+    this.lighting = { ...lighting, brightness: previous.brightness };
+    if (lighting.brightness != null && lighting.brightness !== previous.brightness) {
+      await this.request(razerSetBacklightBrightnessCommand(lighting.brightness));
+      const confirmed = decodeBacklightBrightness(await this.request(RAZER_BACKLIGHT_BRIGHTNESS_READ));
+      if (confirmed !== lighting.brightness) {
+        throw new Error(`The mouse kept ${confirmed}% brightness instead of ${lighting.brightness}%.`);
+      }
+      this.lighting = { ...this.lighting, brightness: confirmed };
+    }
+    return this.lighting;
+  }
+
+  /**
+   * The cached effect plus the brightness the mouse reports. A brightness read
+   * that fails hides only the brightness row; the effects are still offered.
+   */
+  private async readLighting(): Promise<MouseLighting> {
+    const reply = await this.request(RAZER_BACKLIGHT_BRIGHTNESS_READ).catch(() => null);
+    const brightness = reply ? decodeBacklightBrightness(reply) : null;
+    this.lighting = {
+      ...this.lightingFromCache(),
+      brightness,
+      brightnessLevels: brightness === null ? [] : STANDARD_BRIGHTNESS_LEVELS,
+    };
+    return this.lighting;
+  }
+
+  private lightingFromCache(): MouseLighting {
+    this.lighting ??= {
+      zone: STANDARD_LIGHTING_ZONE,
+      modes: STANDARD_LIGHTING_MODES,
+      mode: null,
+      // The colours are the lighting card's own picker defaults and the speed
+      // starts mid-scale, so the first effect picked writes what the card
+      // shows instead of failing for want of a value.
+      color: "#00ff00",
+      color2: "#ff0000",
+      colorModes: STANDARD_COLOR_MODES,
+      dualColorModes: STANDARD_DUAL_COLOR_MODES,
+      reactiveModes: STANDARD_REACTIVE_MODES,
+      speeds: STANDARD_REACTIVE_SPEEDS,
+      speed: STANDARD_REACTIVE_SPEEDS[1],
+      brightness: null,
+      writeOnly: true,
+    };
+    return this.lighting;
   }
 
   async setDpi(dpi: number, dpiY: number = dpi): Promise<number> {

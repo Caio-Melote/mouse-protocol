@@ -54,6 +54,11 @@ import {
   razerReadToggleControlCommand,
   razerSetButtonMappingCommand,
   razerSetToggleControlCommand,
+  RAZER_BACKLIGHT_BRIGHTNESS_READ,
+  decodeBacklightBrightness,
+  razerSetBacklightBrightnessCommand,
+  razerSetStandardEffectCommand,
+  type RazerStandardEffect,
 } from "@openmouse/protocol/razer";
 
 /**
@@ -848,4 +853,59 @@ test("button controls and toggle controls share no control names or option label
   const buttonOnlyMappings = RAZER_BUTTON_MAPPINGS.filter((mapping) => mapping !== "Disabled");
   const toggleEnabledLabels = RAZER_TOGGLE_CONTROLS.map((control) => RAZER_TOGGLE_CONTROL_INFO[control].enabledLabel);
   assert.equal(buttonOnlyMappings.some((mapping) => toggleEnabledLabels.includes(mapping)), false);
+});
+
+test("standard-matrix effects match openrazer's razer_chroma_standard_matrix_effect_* payloads", () => {
+  // No capture of this family exists yet, so these pin the reference
+  // (razerchromacommon.c). The declared size is each effect's own rather than
+  // its argument count: breathing declares eight bytes whatever it carries.
+  const cases: Array<{
+    effect: RazerStandardEffect;
+    options?: Parameters<typeof razerSetStandardEffectCommand>[1];
+    dataSize: number;
+    args: number[];
+  }> = [
+    { effect: "off", dataSize: 0x01, args: [0x00] },
+    { effect: "spectrum", dataSize: 0x01, args: [0x04] },
+    { effect: "wave", dataSize: 0x02, args: [0x01, 0x01] },
+    { effect: "static", options: { color: "#ff8000" }, dataSize: 0x04, args: [0x06, 0xff, 0x80, 0x00] },
+    { effect: "reactive", options: { color: "#00ff00", speed: 3 }, dataSize: 0x05, args: [0x02, 0x03, 0x00, 0xff, 0x00] },
+    { effect: "breathing-random", dataSize: 0x08, args: [0x03, 0x03] },
+    { effect: "breathing-single", options: { color: "#0000ff" }, dataSize: 0x08, args: [0x03, 0x01, 0x00, 0x00, 0xff] },
+    {
+      effect: "breathing-dual",
+      options: { color: "#ff0000", color2: "#00ff00" },
+      dataSize: 0x08,
+      args: [0x03, 0x02, 0xff, 0x00, 0x00, 0x00, 0xff, 0x00],
+    },
+  ];
+  for (const { effect, options, dataSize, args } of cases) {
+    const command = razerSetStandardEffectCommand(effect, options);
+    assert.deepEqual([command.commandClass, command.commandId, command.dataSize], [0x03, 0x0a, dataSize], effect);
+    assert.deepEqual(command.args, args, effect);
+  }
+});
+
+test("a standard-matrix effect refuses to guess a missing colour or speed", () => {
+  assert.throws(() => razerSetStandardEffectCommand("static"), RazerProtocolError);
+  assert.throws(() => razerSetStandardEffectCommand("reactive", { color: "#ffffff" }), RazerProtocolError);
+  assert.throws(() => razerSetStandardEffectCommand("breathing-dual", { color: "#ffffff" }), RazerProtocolError);
+});
+
+test("backlight brightness addresses the backlight led through the storage byte", () => {
+  assert.deepEqual(RAZER_BACKLIGHT_BRIGHTNESS_READ.args, [0x01, 0x05]);
+  const write = razerSetBacklightBrightnessCommand(50);
+  assert.equal(write.commandId, RAZER_BACKLIGHT_BRIGHTNESS_READ.commandId & 0x7f);
+  assert.deepEqual(write.args, [0x01, 0x05, 0x80]);
+  assert.equal(decodeBacklightBrightness(Uint8Array.of(0x01, 0x05, 0xff)), 100);
+  assert.throws(() => razerSetBacklightBrightnessCommand(101), RazerProtocolError);
+});
+
+test("every whole brightness percentage survives the 0-255 round trip", () => {
+  // setLighting confirms brightness by reading it back, so a percentage that
+  // rounded differently on the way back would be reported as refused.
+  for (let percent = 0; percent <= 100; percent += 1) {
+    const level = razerSetBacklightBrightnessCommand(percent).args?.[2] ?? -1;
+    assert.equal(decodeBacklightBrightness(Uint8Array.of(0x01, 0x05, level)), percent);
+  }
 });
