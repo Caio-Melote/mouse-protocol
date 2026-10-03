@@ -23,10 +23,10 @@ const op1 = EGG_DEVICE_PROFILES.get(0x1964)!;
 const purple = EGG_DEVICE_PROFILES.get(0x1976)!;
 const op1v2 = EGG_DEVICE_PROFILES.get(0x1978)!;
 
-test("all eight Endgame Gear OP1-protocol devices have explicit capability profiles", () => {
+test("all ten Endgame Gear OP1-protocol devices have explicit capability profiles", () => {
   assert.deepEqual(
     [...EGG_DEVICE_PROFILES.keys()],
-    [0x1964, 0x1966, 0x1976, 0x1978, 0x1980, 0x1984, 0x1982, 0x1970],
+    [0x1964, 0x1966, 0x1976, 0x1978, 0x1980, 0x1972, 0x1968, 0x1984, 0x1982, 0x1970],
   );
   assert.equal(op1.motionSyncAt8k, false);
   assert.equal(EGG_DEVICE_PROFILES.get(0x1966)!.motionSyncAt8k, false);
@@ -42,12 +42,14 @@ test("OP1w 4K v2 wireless models are capped at 4000 Hz while wired 8K models kee
   assert.equal(EGG_DEVICE_PROFILES.get(0x1970)!.maxPollingHz, 4000);
 });
 
-test("cabled 4K v2 PIDs name their model; the shared dongle stays neutral until the mouse reports its PID", () => {
+test("cabled 4K PIDs name their model; the shared dongle stays neutral until the mouse reports its PID", () => {
   // An XM2w 4K v2 behind the dongle reports the receiver's fixed USB name
   // (confirmed on hardware), so 0x1970 alone cannot say which mouse is paired.
+  assert.equal(eggProfileForPid(0x1972).name, "Endgame Gear OP1w 4K");
+  assert.equal(eggProfileForPid(0x1968).name, "Endgame Gear XM2w 4K");
   assert.equal(eggProfileForPid(0x1984).name, "Endgame Gear OP1w 4K v2");
   assert.equal(eggProfileForPid(0x1982).name, "Endgame Gear XM2w 4K v2");
-  assert.equal(eggProfileForPid(0x1970).name, "Endgame Gear OP1w/XM2w 4K v2");
+  assert.equal(eggProfileForPid(0x1970).name, "Endgame Gear OP1w/XM2w 4K");
 });
 
 test("CPI ranges and quantization follow each sensor generation", () => {

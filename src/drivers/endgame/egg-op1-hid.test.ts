@@ -189,7 +189,7 @@ test("over the shared 0x1970 dongle, the mouse-info reply names the paired 4K v2
   // Asleep: keep the neutral name, then pick up the model once the mouse answers.
   const sleepy = fake4kV2({ productId: 0x1970, pairedPid: null });
   const client = new EggOp1HidClient(sleepy.device);
-  assert.equal((await client.readStatus()).name, "Endgame Gear OP1w/XM2w 4K v2");
+  assert.equal((await client.readStatus()).name, "Endgame Gear OP1w/XM2w 4K");
   sleepy.state.pairedPid = 0x1984;
   assert.equal((await client.readStatus()).name, "Endgame Gear OP1w 4K v2");
 });
@@ -198,4 +198,42 @@ test("a mouse-info reply that lags behind the dongle's held response still names
   // Hardware test over 0x1970: settings wrote fine, yet the name never resolved.
   const lagging = fake4kV2({ productId: 0x1970, pairedPid: 0x1982, relayLagReads: 2 });
   assert.equal((await new EggOp1HidClient(lagging.device).readStatus()).name, "Endgame Gear XM2w 4K v2");
+});
+
+test("an OP1w 4K v1 behind the shared dongle switches to the v1 encodings", async () => {
+  // Ticket #0126: an original OP1w 4K was read and written as a v2 (re/PROTOCOL.md section 12).
+  const v1 = fake4kV2({ productId: 0x1970, pairedPid: 0x1972 });
+  v1.blob[0x09] = 2; // LOD 2 mm: v1 stores whole millimetres
+  v1.blob[0x6f] = 1; // v2's glass-mode byte, which the v1 power block must not carry
+  const client = new EggOp1HidClient(v1.device);
+
+  const status = await client.readStatus();
+  assert.equal(status.name, "Endgame Gear OP1w 4K");
+  assert.deepEqual(status.eggLodOptions, ["1 mm", "2 mm"]);
+  assert.equal(status.liftOffDistance, "High");
+  assert.equal(status.eggSupportsGlassMode, false);
+  assert.equal(status.eggSupportsV2SensorControls, false);
+  assert.equal(status.motionJitterFilter, false);
+  assert.deepEqual(status.supportedPollingRates, [1000, 2000, 4000]);
+  assert.equal(status.eggCpiMax, 26_000);
+
+  await client.setLiftOffDistance("Medium");
+  assert.equal(v1.blob[0x09], 1);
+  v1.writes.length = 0;
+  await client.setPollingRate(2000);
+  assert.deepEqual(v1.writes, ["15 0f 0a 00 00 00 | 00 04 21 01 f0 f0 08 08 08 03 00"]);
+  await client.setMotionJitterFilter(true);
+  assert.equal(v1.blob[0x06] & 0x10, 0x10);
+  await assert.rejects(client.setGlassMode(true), /Glass Mode/);
+  await assert.rejects(client.setPollingRate(125), /Unsupported/);
+  assert.equal(EggOp1HidClient.isSupported(fake4kV2({ productId: 0x1972 }).device), true);
+});
+
+test("writes over the shared dongle wait until the paired mouse identifies itself", async () => {
+  const sleepy = fake4kV2({ productId: 0x1970, pairedPid: null });
+  const client = new EggOp1HidClient(sleepy.device);
+  await assert.rejects(client.setDpi(800), /not identified itself/);
+  assert.deepEqual(sleepy.writes, []);
+  sleepy.state.pairedPid = 0x1984;
+  assert.equal(await client.setDpi(800), 800);
 });
