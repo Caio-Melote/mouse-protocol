@@ -40,6 +40,23 @@ test("button codes follow Launcher's EFunKey and EBasicKey packing", () => {
   assert.equal(keychronButtonOptions("8k").length, new Set(keychronButtonOptions("8k")).size);
 });
 
+test("shortcut presets and polling-rate keys follow Launcher's EShortcutKey and ELoopKey", () => {
+  assert.deepEqual(keychronEncodeButton("Copy (Ctrl+C)", "8k"), [8, 0x07, 0x01, 0x06]);
+  assert.deepEqual(keychronEncodeButton("Screenshot (Cmd+Shift+4)", "1k"), [8, 0x07, 0x0a, 0x21]);
+  assert.deepEqual(keychronEncodeButton("Mission Control", "8k"), [8, 0x0c, 0x9f, 0x02]);
+  assert.deepEqual(keychronEncodeButton("Brightness Up", "8k"), [8, 0x0c, 0x6f, 0x00]);
+  assert.deepEqual(keychronEncodeButton("Polling +", "8k"), [13, 2]);
+  assert.equal(keychronDecodeButton(record([8, 0x07, 0x08, 0x06]), "8k"), "Copy (Cmd+C)");
+  assert.equal(keychronDecodeButton(record([8, 0x07, 0x01, 0x2d]), "1k"), "Zoom Out (Ctrl+-)");
+  assert.equal(keychronDecodeButton(record([8, 0x07, 0x01, 0x04]), "8k"), "Custom");
+  assert.equal(keychronDecodeButton(record([13, 1]), "8k"), "Polling Loop");
+  assert.ok(!keychronButtonOptions("8k").includes("Polling Loop"));
+  assert.ok(keychronButtonOptions("8k", true).includes("Polling -"));
+  assert.ok(keychronButtonOptions("8k").includes("Launchpad"));
+  const options = keychronButtonOptions("8k", true);
+  assert.equal(options.length, new Set(options).size);
+});
+
 test("status bytes 1-17 decode the same for both protocols", () => {
   const bytes = new Uint8Array(20);
   bytes.set([0x07, 1, 0x12, 0x00, 0x00, 0x90, 0x01, 0x20, 0x03, 0x40, 0x06, 0, 0, 0, 0, 0x5d, 3, 6]);

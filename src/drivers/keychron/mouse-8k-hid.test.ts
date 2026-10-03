@@ -700,3 +700,20 @@ test("lit models read and write Launcher's 0x23/0x24 lighting", async () => {
   assert.equal(fake.light.mode, 0);
   await assert.rejects(client(new FakeKeychronMouse()).setLighting(next), /has no lighting/);
 });
+
+test("shortcut presets remap like Launcher and polling keys follow feature1 bit 4", async () => {
+  const fake = new FakeKeychronMouse();
+  const m6 = client(fake);
+  let status = await m6.readStatus();
+  assert.ok(status.buttonOptions?.includes("Copy (Ctrl+C)"));
+  assert.ok(!status.buttonOptions?.includes("Polling Loop"));
+  await m6.setButtonMapping("Tilt Left", "Copy (Ctrl+C)");
+  assert.deepEqual(Array.from(lastSent(fake, 0x52, 0xb3)!.slice(0, 7)), [0x52, 9, 0, 8, 0x07, 0x01, 0x06]);
+  fake.features = [0x10, 0, 0, 0];
+  await m6.setButtonMapping("Tilt Right", "Polling +");
+  assert.deepEqual(Array.from(lastSent(fake, 0x52, 0xb3)!.slice(0, 6)), [0x52, 8, 0, 13, 2, 0]);
+  status = await m6.readStatus();
+  assert.ok(status.buttonOptions?.includes("Polling Loop"));
+  assert.equal(status.buttonMappings?.["Tilt Left"], "Copy (Ctrl+C)");
+  assert.equal(status.buttonMappings?.["Tilt Right"], "Polling +");
+});

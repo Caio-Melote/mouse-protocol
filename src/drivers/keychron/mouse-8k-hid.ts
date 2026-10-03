@@ -311,7 +311,7 @@ export class Keychron8kHidClient {
       sleepTimeout: status.sleepMinutes > 0 && status.sleepMinutes < 0xff ? status.sleepMinutes * 60 : null,
       ...(buttons ? {
         buttonMappings: Object.fromEntries(buttons.map(({ button, action }) => [button.name, action])),
-        buttonOptions: keychronButtonOptions("8k"),
+        buttonOptions: keychronButtonOptions("8k", status.features.pollingGears),
       } : {}),
       ...(light && model?.light ? { lighting: keychronLighting(light, model.light) } : {}),
       firmware: [identity.firmware ?? "Firmware unavailable"],
