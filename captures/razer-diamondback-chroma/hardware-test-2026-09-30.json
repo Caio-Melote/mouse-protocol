@@ -1,0 +1,132 @@
+{
+  "device": {
+    "present": true,
+    "brand": "Razer",
+    "name": "Razer Diamondback Chroma",
+    "vendorId": 5426,
+    "productId": 76,
+    "productName": "Razer Diamondback Chroma",
+    "transport": "bridge",
+    "connectionType": "Wired",
+    "pollingRateHz": 500,
+    "supportedPollingRates": [
+      125,
+      500,
+      1000
+    ],
+    "dpi": 1800,
+    "dpiStages": null,
+    "activeDpiStage": null,
+    "batteryPercent": null,
+    "batteryState": "Unknown",
+    "firmware": [
+      "Mouse 1.0"
+    ],
+    "liftOffDistance": null,
+    "driverFamily": "razer",
+    "deviceMode": null,
+    "collectionsSummary": "interfaces 0x0001:0x0002, 0x000C:0x0001, 0x0001:0x0006, 0x0001:0x0080, 0x0001:0x0000",
+    "signalStrength": null,
+    "receiverOnline": null,
+    "receiverRfId": null,
+    "pairingInProgress": false
+  },
+  "results": [
+    {
+      "key": "connection",
+      "label": "Device connected",
+      "status": "pass",
+      "detail": "Connected through OpenMouse Bridge"
+    },
+    {
+      "key": "interface",
+      "label": "Control interface",
+      "status": "pass",
+      "detail": "interfaces 0x0001:0x0002, 0x000C:0x0001, 0x0001:0x0006, 0x0001:0x0080, 0x0001:0x0000"
+    },
+    {
+      "key": "identity",
+      "label": "Device identity",
+      "status": "pass",
+      "detail": "Razer Razer Diamondback Chroma"
+    },
+    {
+      "key": "driver",
+      "label": "Driver identification",
+      "status": "pass",
+      "detail": "Razer razer"
+    },
+    {
+      "key": "dpi",
+      "label": "DPI read-back",
+      "status": "pass",
+      "detail": "1,800 DPI"
+    },
+    {
+      "key": "pollingRead",
+      "label": "Polling rate read-back",
+      "status": "pass",
+      "detail": "500 Hz"
+    },
+    {
+      "key": "battery",
+      "label": "Battery read-back",
+      "status": "skip",
+      "detail": "Not reported by this device."
+    },
+    {
+      "key": "firmware",
+      "label": "Firmware read-back",
+      "status": "pass",
+      "detail": "Mouse 1.0"
+    },
+    {
+      "key": "liftOff",
+      "label": "Lift-off read-back",
+      "status": "skip",
+      "detail": "Not reported by this device."
+    },
+    {
+      "key": "link",
+      "label": "Wireless link (receiver)",
+      "status": "skip",
+      "detail": null
+    },
+    {
+      "key": "flashRead",
+      "label": "Flash / EEPROM read-back",
+      "status": "pass",
+      "detail": "decoded fields are in range (dpi, polling)"
+    },
+    {
+      "key": "brandWirelessBattery",
+      "label": "Razer wireless battery",
+      "status": "skip",
+      "detail": null
+    },
+    {
+      "key": "sampling",
+      "label": "Polling rate sampling",
+      "status": "skip",
+      "detail": "avg 305 Hz vs reported 500 Hz — dropout or rate mismatch detected, so the sample is not counted as a failure."
+    },
+    {
+      "key": "flashWrite",
+      "label": "Flash write round-trip",
+      "status": "pass",
+      "detail": "wrote 800 DPI → read back → restored 1,800 DPI · wrote 1,000 Hz → read back → restored 500 Hz · Lift-off skipped"
+    }
+  ],
+  "verdict": "pass",
+  "durationMs": 17802.09999999404,
+  "runAt": "2026-09-30T21:58:33.335Z",
+  "build": "BETA · v2.0.58d",
+  "supportedPage": {
+    "listed": true,
+    "status": "likely",
+    "label": "Test Needed",
+    "matchedBy": "pid",
+    "pageModel": "Diamondback Chroma",
+    "detail": "listed as Test Needed on the supported-devices page — this passing verification supports moving it to Supported."
+  }
+}
