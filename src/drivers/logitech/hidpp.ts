@@ -616,7 +616,11 @@ export class LogitechHidppClient {
       );
       return "hidpp20";
     } catch (error: unknown) {
-      return classifyHidpp20Probe(error, error instanceof HidppTimeoutError);
+      const outcome = classifyHidpp20Probe(error, error instanceof HidppTimeoutError);
+      // The request never left the host, so every other index would fail the
+      // same way; surface the transport error instead of a wrong "not a mouse".
+      if (outcome === "unreachable") throw error;
+      return outcome;
     }
   }
 
@@ -3337,10 +3341,13 @@ export class LogitechHidppClient {
   ): Promise<Uint8Array> {
     // Bolt feature traffic only answers on long reports, and Bluetooth has no
     // short report at all: its descriptor declares report 0x11 alone, so a
-    // sendReport(0x10) is rejected outright. Lightspeed and wired mice keep the
-    // short form for the three-parameter path they were verified with; longer
-    // payloads still go through requestLong.
-    if (this.isBoltReceiver || this.isBluetooth) {
+    // sendReport(0x10) is rejected outright. The same happens on platforms that
+    // split a receiver's top-level collections into separate HIDDevices (one
+    // per usage): the usage-2 one carries report 0x11 only, so a short request
+    // on it fails before reaching the receiver. Lightspeed and wired mice with
+    // the short collection keep the short form for the three-parameter path
+    // they were verified with; longer payloads still go through requestLong.
+    if (this.isBoltReceiver || this.isBluetooth || !hasHidppShortCollection(this.reportDevice)) {
       return this.requestLong(featureIndex, functionId, parameters, options.timeoutMs);
     }
     if (parameters.length > 3) {

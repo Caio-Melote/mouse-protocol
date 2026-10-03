@@ -94,10 +94,14 @@ export function hidppIndexCandidates(
 /**
  * Classify a root getFeature probe: only HID++ 2.0 replies mean a mouse is on
  * that index. Bolt receivers answer HID++ 1.0 errors on empty slots / 0xFF.
+ * Anything that is not a HID++ reply at all (sendReport itself rejected, e.g.
+ * on a collection that lacks the report id) is "unreachable": no index was
+ * asked, so it must not count as an answer, let alone a sensorless one.
  */
-export function classifyHidpp20Probe(error: unknown, isTimeout: boolean): "hidpp20" | "absent" {
+export function classifyHidpp20Probe(error: unknown, isTimeout: boolean): "hidpp20" | "absent" | "unreachable" {
   if (isTimeout) return "absent";
-  if (error instanceof Error && /HID\+\+ 1\.0/.test(error.message)) return "absent";
+  if (!(error instanceof Error) || !/^The mouse rejected that/.test(error.message)) return "unreachable";
+  if (/HID\+\+ 1\.0/.test(error.message)) return "absent";
   return "hidpp20";
 }
 

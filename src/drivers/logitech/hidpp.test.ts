@@ -281,7 +281,13 @@ class FakeHidDevice {
 
   async close(): Promise<void> {}
 
+  /** Report ids this collection declares; sendReport rejects any other, like WebHID does. */
+  reportIds: number[] | null = null;
+
   async sendReport(reportId: number, data: Uint8Array): Promise<void> {
+    if (this.reportIds && !this.reportIds.includes(reportId)) {
+      throw new Error("Failed to write the report.");
+    }
     const request = data.slice();
     this.probed.push({ reportId, data: request });
     const reply = this.onRequest(request);
@@ -410,6 +416,25 @@ test("a direct-connect product with no sensor anywhere is reported as not a mous
   assert.equal(await resolveIndex(client), 0xff, "the fast path still trusts the first answer with no probe");
   const error = await resolveIndexExcluding(client, new Set([0xff])).catch((reason) => reason);
   assert.equal((error as Error).name, "NotAMouseError");
+});
+
+test("a long-only receiver collection is addressed on long reports", async () => {
+  // Chrome on some platforms hands out one HIDDevice per top-level collection,
+  // so a Lightspeed receiver can arrive as its usage-2 (report 0x11) half alone.
+  // Ticket 0143: a PRO X Superlight receiver came back "not a mouse" because
+  // every short probe was rejected by the host and counted as an answer.
+  const { client, device } = harness(0xc539, { 0x01: "mouse" }, [fakeCollection(0xff00, 0x0002)]);
+  device.reportIds = [0x11];
+  assert.equal(await resolveIndex(client), 0x01);
+  assert.ok(device.probed.every(({ reportId }) => reportId === 0x11));
+});
+
+test("a rejected sendReport is a transport error, not a sensorless answer", async () => {
+  const { client, device } = harness(0xc539, { 0x01: "mouse" });
+  device.reportIds = [];
+  const error = await resolveIndex(client).catch((reason) => reason);
+  assert.notEqual((error as Error).name, "NotAMouseError");
+  assert.match((error as Error).message, /Failed to write the report/);
 });
 
 test("a Bluetooth mouse is addressed on long reports only", async () => {
